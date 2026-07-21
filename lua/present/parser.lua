@@ -93,6 +93,9 @@ function M.parse(lines, syntax)
   current.group = group
   local in_code = false
   local code_lang, code_body = "", {}
+  -- A callout (`>!note ...`) opens a render-markdown blockquote that keeps
+  -- absorbing following lines until a blank line closes it.
+  local in_callout = false
 
   -- Titles are "sticky": once `>#` sets one it stays in the header across
   -- reveals AND `>---` pages, until the next `>#` changes it.
@@ -122,6 +125,36 @@ function M.parse(lines, syntax)
       table.insert(code_body, raw)
       table.insert(current.body, trimmed)
       goto continue
+    end
+
+    -- Open callout continuation: a blank line closes it, any other line
+    -- becomes a quoted body line of the callout box.
+    if in_callout then
+      if vim.trim(raw) == "" then
+        in_callout = false
+        table.insert(current.body, "")
+      else
+        table.insert(current.body, "> " .. trimmed)
+        seen_content = true
+      end
+      goto continue
+    end
+
+    -- Callout box (`>!note ...`) -> render-markdown blockquote ------
+    do
+      local ctok = S.callout
+      if ctok and ctok ~= "" and raw:sub(1, #ctok) == ctok then
+        local kind, first = raw:sub(#ctok + 1):match("^(%a+)%s*(.*)$")
+        if kind then
+          table.insert(current.body, "> [!" .. kind:upper() .. "]")
+          if first ~= "" then
+            table.insert(current.body, "> " .. first)
+          end
+          in_callout = true
+          seen_content = true
+          goto continue
+        end
+      end
     end
 
     -- New slide with a title (`>#`, `>##`, ...) --------------------

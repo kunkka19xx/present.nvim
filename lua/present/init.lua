@@ -7,12 +7,13 @@
 ---   # / ## / ...   a plain markdown heading is also an in-slide reveal
 ---   >hd / >ft ...  header / footer text (dim), global or per-slide
 ---   >// ...        comment line, dropped from the slide (never shown)
+---   >!note ...     callout box (note/tip/warning/...); more lines until a blank
 ---   Notes: ...     speaker note, shown with `s`, never on the slide
 ---
 --- Keys during a presentation:
 ---   n / <Space> / <Right>   next    p / b / <Left>   previous
 ---   gg first   G last   {count}G goto   o overview   / search
----   X run first block   A run all blocks   s notes   ? help   q quit
+---   X run first block   A run all blocks   s notes   r reload   ? help   q quit
 ---
 --- Code is split across:
 ---   config     defaults + setup      parser    markdown -> slides
@@ -40,18 +41,38 @@ local function present_keymap(mode, key, callback)
   vim.keymap.set(mode, key, callback, { buffer = state.floats.body.buf })
 end
 
+--- Re-parse the source buffer and re-render the current slide in place. Used by
+--- hot reload (the `r` key and `:w` on the source). Keeps the current position
+--- (clamped) so edits show up without leaving the presentation. A brand-new
+--- banner (header added/removed after start) is not re-laid-out - restart for that.
+local function reload()
+  if not state.active or not vim.api.nvim_buf_is_valid(state.source_buf) then
+    return
+  end
+  local lines = vim.api.nvim_buf_get_lines(state.source_buf, 0, -1, false)
+  local parsed = parser.parse(lines, config.options.syntax)
+  if #parsed.slides == 0 then
+    return
+  end
+  state.parsed = parsed
+  ui.set_slide_content(state.current_slide) -- clamps to the new slide count
+end
+
 M.start_presentation = function(opts)
   opts = opts or {}
   opts.bufnr = opts.bufnr or 0
+  -- Resolve 0 -> the real buffer so hot reload has a stable handle later.
+  local source_buf = opts.bufnr == 0 and vim.api.nvim_get_current_buf() or opts.bufnr
+  state.source_buf = source_buf
 
-  local lines = vim.api.nvim_buf_get_lines(opts.bufnr, 0, -1, false)
+  local lines = vim.api.nvim_buf_get_lines(source_buf, 0, -1, false)
   state.parsed = parser.parse(lines, config.options.syntax)
   if #state.parsed.slides == 0 then
     vim.notify("present: no slides found (use `># Title` or `>---`)", vim.log.levels.WARN)
     return
   end
   state.current_slide = 1
-  state.title = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(opts.bufnr), ":t")
+  state.title = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(source_buf), ":t")
   state.active = true
 
   -- Reserve the top banner line if any header text is configured. Fixed for the
@@ -110,6 +131,7 @@ M.start_presentation = function(opts)
     overlays.run_code(true)
   end)
   present_keymap("n", "s", overlays.notes)
+  present_keymap("n", "r", reload)
   present_keymap("n", "?", overlays.help)
   present_keymap("n", "q", overlays.confirm_quit)
 
@@ -132,6 +154,13 @@ M.start_presentation = function(opts)
     group = vim.api.nvim_create_augroup("present-teardown", { clear = true }),
     pattern = tostring(state.floats.body.win),
     callback = ui.end_presentation,
+  })
+
+  -- Hot reload: saving the source buffer re-renders the current slide in place.
+  vim.api.nvim_create_autocmd("BufWritePost", {
+    group = vim.api.nvim_create_augroup("present-reload", { clear = true }),
+    buffer = source_buf,
+    callback = reload,
   })
 
   vim.api.nvim_create_autocmd("VimResized", {

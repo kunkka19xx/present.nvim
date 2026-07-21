@@ -11,6 +11,8 @@ https://github.com/user-attachments/assets/2211f408-67e5-402c-80b4-a59e7e93bc1a
 - `>`-prefixed markers that never collide with the markdown you render
 - in-slide **reveals** that grow downward (no jumping)
 - **sticky titles** and configurable **header / footer** text
+- **callout boxes** (`>!note`, `>!tip`, `>!warning`, ...)
+- **hot reload** - edit the source, save, and the slide updates in place
 - **run** code blocks live (lua, js, ts, python, bash, sh, go, rust, or your own)
 - **fuzzy search** with a preview pane, a slide **picker**, and **speaker notes**
 - every marker is **configurable**
@@ -29,6 +31,7 @@ in-slide.**
 | `>hd <text>` | header text, shown dim above the title (outside the box) |
 | `>ft <text>` | footer text, shown dim along the bottom |
 | `>// ...` | comment - dropped, never shown |
+| `>!note <text>` | callout box (`note` / `tip` / `warning` / `important` / ...) |
 | `Notes: ...` | speaker note - shown with `s`, never on the slide |
 
 - **Sticky titles:** a `>#` title stays in the header across in-slide reveals and
@@ -37,6 +40,11 @@ in-slide.**
   global (every slide); placed **inside a slide** they override just that slide.
   There is no fixed hint bar - the footer is yours (a small `page/total` counter
   sits at the far right).
+- **Callouts:** `>!<type> <text>` opens a callout box. The type is any keyword
+  (`note`, `tip`, `warning`, `important`, `caution`, ...); the box keeps absorbing
+  lines until a **blank line** closes it. Rendering (border + colored icon) is
+  provided by [`render-markdown.nvim`](https://github.com/MeanderingProgrammer/render-markdown.nvim);
+  the icon needs a Nerd Font.
 
 ### Example
 
@@ -55,6 +63,8 @@ This heading reveals too, and is shown as content.
 
 >// a private note-to-self, never rendered
 Notes: remember to breathe
+
+>!tip A callout box - runs until the next blank line.
 
 >---
 A brand new slide, with no title.
@@ -76,6 +86,7 @@ print("press X to run me")
 | `o` | slide overview / picker |
 | `X` / `A` | run first / all code blocks |
 | `s` | toggle speaker notes |
+| `r` | reload from the source buffer (also automatic on `:w`) |
 | `?` | help |
 | `q` | quit (asks for confirmation, `y`/`n`) |
 
@@ -123,6 +134,7 @@ require("present").setup {
     header      = ">hd",      -- prefix: header text (dim, above the title)
     footer      = ">ft",      -- prefix: footer text (dim, along the bottom)
     comment     = ">//",      -- prefix: line dropped, never shown
+    callout     = ">!",       -- prefix: callout box, e.g. `>!note text`
     notes       = "Notes:",   -- prefix: speaker note (shown with `s`)
     reveal_on_heading = true, -- also treat plain markdown headings as reveals
   },
@@ -162,6 +174,14 @@ require("present").setup {
 `create_system_executor(program, ext?)` writes the block to a temp file and runs
 `program` on it. For full control, an executor is just
 `function(block) -> string[]` (see `lua/present/executors.lua`).
+
+## Hot reload
+
+While a presentation is running, saving the source buffer (`:w`) re-parses the
+deck and re-renders the current slide in place - no need to quit and restart.
+Press `r` to reload manually. Your position is kept (clamped if the slide count
+shrank), so tweak wording, save, and watch it update. (Adding or removing a
+`>hd` header after start won't re-lay-out the top banner - restart for that.)
 
 ## Project layout
 

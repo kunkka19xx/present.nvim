@@ -224,6 +224,7 @@ function M.help()
     "  o                       slide overview / picker",
     "  X / A                   run first / all code blocks",
     "  s                       toggle speaker notes",
+    "  r                       reload from the source file",
     "  ? / q                   help / quit (q confirms y/n)",
     "",
     "# separators",
@@ -234,7 +235,8 @@ function M.help()
     "  # heading  in-slide reveal (shown as content)",
     "  >hd / >ft  header / footer text",
     "  >// ...     comment (dropped, never shown)",
-  }, { title = "Help", width = 0.55, height = 0.72 })
+    "  >!note ...  callout box (note/tip/warning/...)",
+  }, { title = "Help", width = 0.55, height = 0.75 })
 end
 
 return M

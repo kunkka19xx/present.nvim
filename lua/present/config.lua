@@ -15,6 +15,7 @@ local executors = require("present.executors")
 ---@field header string?            Prefix for header text (">hd")
 ---@field footer string?            Prefix for footer text (">ft")
 ---@field comment string?           Prefix for dropped comment lines (">//")
+---@field callout string?           Prefix opening a callout box (">!", e.g. ">!note")
 ---@field notes string?             Prefix for speaker-note lines ("Notes:")
 ---@field reveal_on_heading boolean Treat plain markdown headings as in-slide reveals
 
@@ -35,6 +36,7 @@ M.defaults = {
     header = ">hd", -- prefix: header text (dim, above the title)
     footer = ">ft", -- prefix: footer text (dim, along the bottom)
     comment = ">//", -- prefix: line dropped, never shown
+    callout = ">!", -- prefix: callout box, e.g. `>!note text` (note/tip/warning/...)
     notes = "Notes:", -- prefix: speaker note (shown with `s`)
     reveal_on_heading = true, -- also treat plain markdown headings as reveals
   },

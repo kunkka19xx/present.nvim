@@ -27,4 +27,21 @@ for i = 1, 3 do
 end
 ```
 
+># Callouts
+
+>!note This is a note callout - great for asides.
+
+>!tip Press `r` to hot-reload after editing this file.
+
+>!warning Callouts end at a blank line, so separate them.
+
+># Tables
+
+| Feature        | Supported | Notes                          |
+| -------------- | :-------: | ------------------------------ |
+| Headers        | yes       | shown as content               |
+| Code blocks    | yes       | run with `X`                   |
+| Callouts       | yes       | `>!note`, `>!tip`, ...          |
+| Tables         | yes       | this very slide                |
+
 >// end of deck
