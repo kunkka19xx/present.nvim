@@ -90,23 +90,44 @@ end
 -- Options
 ----------------------------------------------------------------------
 
+-- WARNING when customising markers: they are matched LITERALLY at the start of a
+-- line, so pick tokens that cannot collide with content you actually write or
+-- with markdown you render. Avoid bare markdown/vim syntax such as `#` (heading),
+-- `>` alone (blockquote), `-`/`*` (list/rule), `` ` `` (code). The defaults use a
+-- `>`+non-space prefix precisely because that is not something you'd normally
+-- type as prose or valid markdown. `slide_break`/`reveal` must be their own whole
+-- line; `slide`/`header`/`footer`/`comment`/`notes` are line prefixes.
 ---@class present.Syntax
----@field comment string?          Prefix for dropped comment lines (startswith, not a pattern)
----@field notes string?            Lua pattern for speaker-note lines
+---@field slide string?             Prefix marking a titled slide (default ">#")
+---@field slide_break string?       Whole-line marker for a new untitled slide (">---")
+---@field reveal string?            Whole-line marker for an in-slide reveal ("---")
+---@field header string?            Prefix for header text (">hd")
+---@field footer string?            Prefix for footer text (">ft")
+---@field comment string?           Prefix for dropped comment lines (">//")
+---@field notes string?             Prefix for speaker-note lines ("Notes:")
 ---@field reveal_on_heading boolean Treat plain markdown headings as in-slide reveals
 
 ---@class present.Options
 ---@field syntax present.Syntax
----@field center_vertical boolean   Vertically center body content in the card
+---@field center_vertical boolean   Center body vertically (else flow from top)
+---@field top_padding integer        Blank lines above the body when not centering
 ---@field executors table<string, fun(block: present.Block): string[]>
 
 local defaults = {
+  -- All markers are LITERAL tokens. See the warning above present.Syntax before
+  -- changing them.
   syntax = {
-    comment = ">//",
-    notes = "^[Nn]otes?:%s?",
-    reveal_on_heading = true,
+    slide = ">#", -- prefix: new slide, text after = title (also >##, >###)
+    slide_break = ">---", -- whole line: new slide, no title
+    reveal = "---", -- whole line: in-slide reveal step
+    header = ">hd", -- prefix: header text (dim, above the title)
+    footer = ">ft", -- prefix: footer text (dim, along the bottom)
+    comment = ">//", -- prefix: line dropped, never shown
+    notes = "Notes:", -- prefix: speaker note (shown with `s`)
+    reveal_on_heading = true, -- also treat plain markdown headings as reveals
   },
-  center_vertical = true,
+  center_vertical = false, -- false: flow from top; true: center in the card
+  top_padding = 1, -- blank lines above the body when not centering
   executors = {
     lua = execute_lua_code,
     javascript = M.create_system_executor("node"),
@@ -148,20 +169,32 @@ end
 ---@field slides present.Slide[]
 ---@field global { header: string?, footer: string? }  Deck-wide header/footer
 
--- Lua patterns, tested only when NOT inside a fenced code block.
-local PAT = {
-  slide_title = "^>%s*#+%s*(.-)%s*$", -- ># Title / >## Title  (capture = title)
-  slide_break = "^>%s*%-%-%-+%s*$", -- >---
-  reveal_rule = "^%s*%-%-%-+%s*$", -- ---
-  reveal_head = "^#+%s", -- plain markdown heading
-}
+-- All markers are LITERAL tokens (see options.syntax), matched two ways:
+--   * whole-line  : the trimmed line equals the token        (slide_break, reveal)
+--   * prefix      : the line starts with the token, and what  (slide, header,
+--                   follows is the payload                      footer, comment, notes)
+-- Literal matching (rather than user-supplied Lua patterns) keeps custom markers
+-- predictable and avoids accidental regex meta-character surprises.
 
--- Match a `>name ...` directive line. Returns the text after it (possibly ""),
--- or nil when the line isn't that directive. Requires a boundary after `name`
--- so `>hdx` is not mistaken for `>hd`.
-local function directive(raw, name)
-  local head, rest = raw:match("^(>" .. name .. ")(.*)$")
-  if head and (rest == "" or rest:match("^%s")) then
+-- Whole trimmed line equals `token`.
+local function is_line(raw, token)
+  return token and token ~= "" and vim.trim(raw) == token
+end
+
+-- Line begins with `token` followed by a space or end-of-line; returns the
+-- trimmed remainder (possibly ""), else nil. The boundary stops `>hdx` matching
+-- `>hd`. When `allow_repeat` is set, the marker's final char may repeat, so the
+-- title marker `>#` also accepts `>##`, `>###`.
+local function after_token(raw, token, allow_repeat)
+  if not token or token == "" or raw:sub(1, #token) ~= token then
+    return nil
+  end
+  local rest = raw:sub(#token + 1)
+  if allow_repeat then
+    local last = token:sub(-1)
+    rest = rest:gsub("^" .. vim.pesc(last) .. "+", "")
+  end
+  if rest == "" or rest:match("^%s") then
     return vim.trim(rest)
   end
   return nil
@@ -211,9 +244,7 @@ local parse_slides = function(lines)
   local in_code = false
   local code_lang, code_body = "", {}
 
-  local comment = options.syntax.comment
-  local notes = options.syntax.notes
-  local reveal_on_heading = options.syntax.reveal_on_heading
+  local S = options.syntax
 
   -- Titles are "sticky": once `>#` sets one it stays in the header across
   -- reveals AND `>---` pages, until the next `>#` changes it.
@@ -245,9 +276,9 @@ local parse_slides = function(lines)
       goto continue
     end
 
-    -- Slide-level markers (`>` prefix) -----------------------------
+    -- New slide with a title (`>#`, `>##`, ...) --------------------
     do
-      local title = raw:match(PAT.slide_title)
+      local title = after_token(raw, S.slide, true)
       if title ~= nil then
         push(current)
         group = group + 1
@@ -259,7 +290,9 @@ local parse_slides = function(lines)
         goto continue
       end
     end
-    if raw:match(PAT.slide_break) then
+
+    -- New slide, no title (`>---`) ---------------------------------
+    if is_line(raw, S.slide_break) then
       push(current)
       group = group + 1
       current = new_slide()
@@ -269,9 +302,9 @@ local parse_slides = function(lines)
       goto continue
     end
 
-    -- Header / footer directives -----------------------------------
+    -- Header / footer directives (`>hd` / `>ft`) -------------------
     do
-      local hd = directive(raw, "hd")
+      local hd = after_token(raw, S.header)
       if hd ~= nil then
         if seen_content then
           current.header = hd
@@ -280,7 +313,7 @@ local parse_slides = function(lines)
         end
         goto continue
       end
-      local ft = directive(raw, "ft")
+      local ft = after_token(raw, S.footer)
       if ft ~= nil then
         if seen_content then
           current.footer = ft
@@ -291,23 +324,29 @@ local parse_slides = function(lines)
       end
     end
 
-    -- Dropped / captured lines -------------------------------------
-    if comment and vim.startswith(raw, comment) then
-      goto continue
-    end
-    if notes and raw:match(notes) then
-      table.insert(current.notes, (raw:gsub(notes, "")))
+    -- Comment (`>//`), dropped -------------------------------------
+    if S.comment and S.comment ~= "" and vim.startswith(raw, S.comment) then
       goto continue
     end
 
-    -- In-slide reveals ---------------------------------------------
-    if raw:match(PAT.reveal_rule) then
-      reveal(current) -- `---` marker itself is not rendered
+    -- Speaker note (`Notes:`) --------------------------------------
+    do
+      local note = after_token(raw, S.notes)
+      if note ~= nil then
+        table.insert(current.notes, note)
+        goto continue
+      end
+    end
+
+    -- In-slide reveal (`---`) --------------------------------------
+    if is_line(raw, S.reveal) then
+      reveal(current) -- the marker itself is not rendered
       goto continue
     end
-    if reveal_on_heading and raw:match(PAT.reveal_head) then
-      reveal(current) -- heading reveals on the next keypress...
-      table.insert(current.body, trimmed) -- ...and is shown as content
+    -- A plain markdown heading also reveals in-slide (and shows as content).
+    if S.reveal_on_heading and raw:match("^#+%s") then
+      reveal(current)
+      table.insert(current.body, trimmed)
       seen_content = true
       goto continue
     end
@@ -320,6 +359,17 @@ local parse_slides = function(lines)
   end
 
   push(current)
+
+  -- Trim leading/trailing blank lines so the top gap is controlled purely by
+  -- `top_padding` (and centering isn't thrown off by stray blanks).
+  for _, s in ipairs(slides.slides) do
+    while #s.body > 0 and vim.trim(s.body[1]) == "" do
+      table.remove(s.body, 1)
+    end
+    while #s.body > 0 and vim.trim(s.body[#s.body]) == "" do
+      table.remove(s.body)
+    end
+  end
 
   -- Each slide's `anchor` = the tallest body in its reveal group, so every
   -- reveal step keeps the same top offset and grows downward (no jumping).
@@ -351,8 +401,10 @@ local create_window_configurations = function(banner)
   local width = vim.o.columns
   local height = vim.o.lines
   local banner_h = banner and 1 or 0
-  local body_row = banner_h + 4 -- banner + title box (border+line+border) + gap
-  local body_height = height - body_row - 3
+  -- Body sits directly under the title box (banner + top border + title + bottom
+  -- border). No body border, so the only gap under the title is `top_padding`.
+  local body_row = banner_h + 3
+  local body_height = height - body_row - 2
 
   local cfg = {
     background = { relative = "editor", width = width, height = height, style = "minimal", col = 0, row = 0, zindex = 1 },
@@ -368,10 +420,9 @@ local create_window_configurations = function(banner)
     },
     body = {
       relative = "editor",
-      width = width - 8,
+      width = width - 16,
       height = body_height,
       style = "minimal",
-      border = { " ", " ", " ", " ", " ", " ", " ", " " },
       col = 8,
       row = body_row,
     },
@@ -447,13 +498,18 @@ local set_slide_content = function(idx)
   -- placement is left to the body window's position (see window config).
   local body = vim.deepcopy(slide.body)
 
-  -- Vertical: anchor to the group's fullest reveal so the top stays put and
-  -- reveals grow downward, instead of the whole block jumping each keypress.
+  -- Vertical placement. Default: flow from the top with a small gap. Optional
+  -- center_vertical anchors to the group's fullest reveal so the top stays put
+  -- and reveals grow downward, rather than the whole block jumping.
   if options.center_vertical then
     local body_height = vim.api.nvim_win_get_height(state.floats.body.win)
     local anchor = slide.anchor or #body
     local pad = math.max(0, math.floor((body_height - anchor) / 2))
     for _ = 1, pad do
+      table.insert(body, 1, "")
+    end
+  else
+    for _ = 1, math.max(0, options.top_padding or 0) do
       table.insert(body, 1, "")
     end
   end
@@ -492,10 +548,12 @@ end
 
 --- Auxiliary floats do NOT tear down the presentation: teardown is tied to
 --- the body *window* closing, not to losing focus.
+-- width/height: a fraction (<= 1) of the screen, or an absolute cell count (> 1).
 local open_overlay = function(lines, opts)
   opts = opts or {}
-  local w = math.floor(vim.o.columns * (opts.width or 0.6))
-  local h = math.floor(vim.o.lines * (opts.height or 0.6))
+  local ow, oh = opts.width or 0.6, opts.height or 0.6
+  local w = ow <= 1 and math.floor(vim.o.columns * ow) or ow
+  local h = oh <= 1 and math.floor(vim.o.lines * oh) or oh
   local buf = vim.api.nvim_create_buf(false, true)
   local win = vim.api.nvim_open_win(buf, true, {
     relative = "editor",
@@ -637,12 +695,14 @@ local goto_search = function()
   end
 end
 
---- Ask before quitting the presentation.
+--- Ask before quitting the presentation. Compact, content-fit, centered.
 local confirm_quit = function()
-  local ov = open_overlay(
-    { "", "  Quit the presentation?", "", "  [y] yes       [n] no", "" },
-    { title = "Confirm", filetype = "text", width = 0.3, height = 0.28 }
-  )
+  local prompt = "Quit the presentation?"
+  local choices = "[y] yes     [n] no"
+  local inner = math.max(vim.fn.strdisplaywidth(prompt), vim.fn.strdisplaywidth(choices))
+  local w = inner + 6
+  local lines = { "", centered(prompt, w), "", centered(choices, w), "" }
+  local ov = open_overlay(lines, { title = "Confirm", filetype = "text", width = w, height = #lines })
   vim.keymap.set("n", "y", function()
     ov.close()
     if vim.api.nvim_win_is_valid(state.floats.body.win) then

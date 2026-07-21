@@ -86,19 +86,34 @@ Then run `:PresentStart` on a markdown buffer.
 
 ```lua
 require("present").setup {
+  -- Every marker is configurable. Values are LITERAL tokens (not patterns).
   syntax = {
-    comment = ">//",              -- prefix for dropped comment lines
-    notes = "^[Nn]otes?:%s?",     -- Lua pattern for speaker-note lines
-    reveal_on_heading = true,     -- plain markdown headings reveal in-slide
+    slide       = ">#",       -- prefix: new slide, text after = title (also >##)
+    slide_break = ">---",     -- whole line: new slide, no title
+    reveal      = "---",      -- whole line: in-slide reveal step
+    header      = ">hd",      -- prefix: header text (dim, above the title)
+    footer      = ">ft",      -- prefix: footer text (dim, along the bottom)
+    comment     = ">//",      -- prefix: line dropped, never shown
+    notes       = "Notes:",   -- prefix: speaker note (shown with `s`)
+    reveal_on_heading = true, -- also treat plain markdown headings as reveals
   },
-  center_vertical = true,         -- vertically center slide body (anchored so
-                                  -- reveals grow downward without jumping)
+  center_vertical = false,        -- false: flow from the top; true: center the
+                                  -- body (anchored so reveals grow downward)
+  top_padding = 1,                -- blank lines above the body when not centering
   executors = {
     -- language = function(block) return { "output", "lines" } end
     -- built in: lua, javascript, typescript, python, bash, sh, go, rust
   },
 }
 ```
+
+> **⚠️ Choosing custom markers.** Markers are matched **literally** at the start
+> of a line (`slide_break`/`reveal` must be the *whole* line; the rest are line
+> prefixes). Pick tokens that **cannot collide** with prose you write or markdown
+> you render — avoid bare `#` (heading), `>` alone (blockquote), `-`/`*` (list or
+> rule), and `` ` `` (code). The defaults use a `>`+non-space prefix on purpose,
+> since that's not valid markdown or normal prose. Also make sure a marker can't
+> appear as literal slide content.
 
 ## Code execution
 
