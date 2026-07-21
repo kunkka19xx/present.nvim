@@ -1,4 +1,4 @@
---- present.nvim — a minimal, hackable markdown slideshow for Neovim.
+--- present.nvim - a minimal, hackable markdown slideshow for Neovim.
 ---
 --- Separator design ("`>` prefix = slide-level, no prefix = in-slide"):
 ---   ># Title      new slide, with a title (>#, >##, ... any level)
@@ -97,7 +97,7 @@ end
 
 ---@class present.Options
 ---@field syntax present.Syntax
----@field center_vertical boolean  Vertically center body content in the card
+---@field center_vertical boolean   Vertically center body content in the card
 ---@field executors table<string, fun(block: present.Block): string[]>
 
 local defaults = {
@@ -122,7 +122,7 @@ local defaults = {
 ---@type present.Options
 local options = vim.deepcopy(defaults)
 
---- Configure the plugin (optional — sensible defaults otherwise).
+--- Configure the plugin (optional - sensible defaults otherwise).
 ---@param opts present.Options?
 M.setup = function(opts)
   options = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {})
@@ -141,9 +141,12 @@ end
 ---@field body string[]
 ---@field blocks present.Block[]
 ---@field notes string[]
+---@field header string?  Per-slide header text (below the title), overrides global
+---@field footer string?  Per-slide footer text, overrides global
 
 ---@class present.Slides
 ---@field slides present.Slide[]
+---@field global { header: string?, footer: string? }  Deck-wide header/footer
 
 -- Lua patterns, tested only when NOT inside a fenced code block.
 local PAT = {
@@ -153,14 +156,25 @@ local PAT = {
   reveal_head = "^#+%s", -- plain markdown heading
 }
 
+-- Match a `>name ...` directive line. Returns the text after it (possibly ""),
+-- or nil when the line isn't that directive. Requires a boundary after `name`
+-- so `>hdx` is not mistaken for `>hd`.
+local function directive(raw, name)
+  local head, rest = raw:match("^(>" .. name .. ")(.*)$")
+  if head and (rest == "" or rest:match("^%s")) then
+    return vim.trim(rest)
+  end
+  return nil
+end
+
 --- Parse buffer lines into slides (with reveals expanded to sub-slides).
 ---@param lines string[]
 ---@return present.Slides
 local parse_slides = function(lines)
-  local slides = { slides = {} }
+  local slides = { slides = {}, global = { header = nil, footer = nil } }
 
   local new_slide = function()
-    return { title = "", body = {}, blocks = {}, notes = {} }
+    return { title = "", body = {}, blocks = {}, notes = {}, header = nil, footer = nil }
   end
 
   local body_has_content = function(slide)
@@ -189,7 +203,11 @@ local parse_slides = function(lines)
     end
   end
 
+  -- A "group" is one logical slide; its reveal snapshots share a group id so
+  -- they can all be vertically anchored to the group's fullest state.
+  local group = 1
   local current = new_slide()
+  current.group = group
   local in_code = false
   local code_lang, code_body = "", {}
 
@@ -201,12 +219,17 @@ local parse_slides = function(lines)
   -- reveals AND `>---` pages, until the next `>#` changes it.
   local last_title = ""
 
+  -- `>hd` / `>ft` are global while still in the preamble (before any slide or
+  -- content), otherwise they attach to the current slide.
+  local seen_content = false
+
   for _, raw in ipairs(lines) do
     local trimmed = (raw:gsub("%s*$", ""))
     local fence = raw:match("^%s*```(%S*)") or raw:match("^%s*~~~(%S*)")
 
     -- Fenced code blocks -------------------------------------------
     if fence ~= nil then
+      seen_content = true
       if not in_code then
         in_code, code_lang, code_body = true, vim.trim(fence), {}
       else
@@ -227,17 +250,45 @@ local parse_slides = function(lines)
       local title = raw:match(PAT.slide_title)
       if title ~= nil then
         push(current)
+        group = group + 1
         current = new_slide()
+        current.group = group
         last_title = title
         current.title = title
+        seen_content = true
         goto continue
       end
     end
     if raw:match(PAT.slide_break) then
       push(current)
+      group = group + 1
       current = new_slide()
+      current.group = group
       current.title = last_title -- carry the title onto the new page
+      seen_content = true
       goto continue
+    end
+
+    -- Header / footer directives -----------------------------------
+    do
+      local hd = directive(raw, "hd")
+      if hd ~= nil then
+        if seen_content then
+          current.header = hd
+        else
+          slides.global.header = hd
+        end
+        goto continue
+      end
+      local ft = directive(raw, "ft")
+      if ft ~= nil then
+        if seen_content then
+          current.footer = ft
+        else
+          slides.global.footer = ft
+        end
+        goto continue
+      end
     end
 
     -- Dropped / captured lines -------------------------------------
@@ -257,14 +308,29 @@ local parse_slides = function(lines)
     if reveal_on_heading and raw:match(PAT.reveal_head) then
       reveal(current) -- heading reveals on the next keypress...
       table.insert(current.body, trimmed) -- ...and is shown as content
+      seen_content = true
       goto continue
     end
 
+    if vim.trim(trimmed) ~= "" then
+      seen_content = true
+    end
     table.insert(current.body, trimmed)
     ::continue::
   end
 
   push(current)
+
+  -- Each slide's `anchor` = the tallest body in its reveal group, so every
+  -- reveal step keeps the same top offset and grows downward (no jumping).
+  local group_max = {}
+  for _, s in ipairs(slides.slides) do
+    group_max[s.group] = math.max(group_max[s.group] or 0, #s.body)
+  end
+  for _, s in ipairs(slides.slides) do
+    s.anchor = group_max[s.group]
+  end
+
   return slides
 end
 
@@ -278,14 +344,17 @@ local function create_floating_window(config, enter)
   return { buf = buf, win = win }
 end
 
-local create_window_configurations = function()
+-- When `banner` is true, a borderless dim header line sits ABOVE the title box
+-- (row 0), outside the box. The banner is reserved for the whole deck so the
+-- body never shifts between slides.
+local create_window_configurations = function(banner)
   local width = vim.o.columns
   local height = vim.o.lines
-  local header_height = 1 + 2
-  local footer_height = 1
-  local body_height = height - header_height - footer_height - 2 - 1
+  local banner_h = banner and 1 or 0
+  local body_row = banner_h + 4 -- banner + title box (border+line+border) + gap
+  local body_height = height - body_row - 3
 
-  return {
+  local cfg = {
     background = { relative = "editor", width = width, height = height, style = "minimal", col = 0, row = 0, zindex = 1 },
     header = {
       relative = "editor",
@@ -294,7 +363,7 @@ local create_window_configurations = function()
       style = "minimal",
       border = "rounded",
       col = 0,
-      row = 0,
+      row = banner_h,
       zindex = 2,
     },
     body = {
@@ -304,10 +373,15 @@ local create_window_configurations = function()
       style = "minimal",
       border = { " ", " ", " ", " ", " ", " ", " ", " " },
       col = 8,
-      row = 4,
+      row = body_row,
     },
     footer = { relative = "editor", width = width, height = 1, style = "minimal", col = 0, row = height - 1, zindex = 3 },
   }
+  if banner then
+    -- Borderless line at the very top, outside the title box.
+    cfg.banner = { relative = "editor", width = width, height = 1, style = "minimal", col = 0, row = 0, zindex = 2 }
+  end
+  return cfg
 end
 
 ----------------------------------------------------------------------
@@ -315,18 +389,34 @@ end
 ----------------------------------------------------------------------
 
 local state = {
-  parsed = { slides = {} },
+  parsed = { slides = {}, global = {} },
   current_slide = 1,
   floats = {},
   title = "",
   active = false,
+  banner = false,
 }
 local restore = {}
+local ns = vim.api.nvim_create_namespace("present-dim")
 
 local foreach_float = function(cb)
   for name, float in pairs(state.floats) do
     cb(name, float)
   end
+end
+
+local function centered(text, width)
+  local pad = math.max(0, math.floor((width - vim.fn.strdisplaywidth(text)) / 2))
+  return string.rep(" ", pad) .. text
+end
+
+-- Dim the whole first line of `buf` (used for the mini gray header/footer text).
+local function dim_line(buf, line)
+  pcall(vim.api.nvim_buf_set_extmark, buf, ns, line, 0, {
+    end_row = line + 1,
+    hl_group = "PresentDim",
+    hl_eol = true,
+  })
 end
 
 local set_slide_content = function(idx)
@@ -337,29 +427,46 @@ local set_slide_content = function(idx)
   state.current_slide = idx
 
   local slide = state.parsed.slides[idx]
+  local global = state.parsed.global or {}
   local width = vim.o.columns
 
-  local title = slide.title or ""
-  local title_pad = math.max(0, math.floor((width - vim.fn.strdisplaywidth(title)) / 2))
-  vim.api.nvim_buf_set_lines(state.floats.header.buf, 0, -1, false, { string.rep(" ", title_pad) .. title })
+  -- Title goes in the rounded box; the optional header text sits ABOVE it in
+  -- the borderless banner (dim), outside the box.
+  vim.api.nvim_buf_set_lines(state.floats.header.buf, 0, -1, false, { centered(slide.title or "", width) })
+  if state.floats.banner then
+    local eff_header = slide.header or global.header or ""
+    vim.api.nvim_buf_clear_namespace(state.floats.banner.buf, ns, 0, -1)
+    vim.api.nvim_buf_set_lines(state.floats.banner.buf, 0, -1, false, { centered(eff_header, width) })
+    if eff_header ~= "" then
+      dim_line(state.floats.banner.buf, 0)
+    end
+  end
 
+  -- NB: body text is NOT indented - fenced code and headings must start at
+  -- column 0 or treesitter / render-markdown won't parse them. Horizontal
+  -- placement is left to the body window's position (see window config).
   local body = vim.deepcopy(slide.body)
+
+  -- Vertical: anchor to the group's fullest reveal so the top stays put and
+  -- reveals grow downward, instead of the whole block jumping each keypress.
   if options.center_vertical then
     local body_height = vim.api.nvim_win_get_height(state.floats.body.win)
-    local pad = math.floor((body_height - #body) / 2)
+    local anchor = slide.anchor or #body
+    local pad = math.max(0, math.floor((body_height - anchor) / 2))
     for _ = 1, pad do
       table.insert(body, 1, "")
     end
   end
   vim.api.nvim_buf_set_lines(state.floats.body.buf, 0, -1, false, body)
 
-  local hint = "  n/p move · / search · o overview · X/A run · s notes · ? help · q quit"
-  local left = string.format("  %d / %d | %s", idx, #state.parsed.slides, state.title)
-  if #slide.notes > 0 then
-    left = left .. "  ●notes"
-  end
-  local gap = math.max(1, width - vim.fn.strdisplaywidth(left) - vim.fn.strdisplaywidth(hint) - 2)
-  vim.api.nvim_buf_set_lines(state.floats.footer.buf, 0, -1, false, { left .. string.rep(" ", gap) .. hint })
+  -- Footer: user text on the left, a small page counter on the right. Both dim.
+  local eff_footer = slide.footer or global.footer or ""
+  local counter = string.format("%d/%d%s ", idx, #state.parsed.slides, #slide.notes > 0 and " ●" or "")
+  local left = eff_footer ~= "" and (" " .. eff_footer) or ""
+  local gap = math.max(1, width - vim.fn.strdisplaywidth(left) - vim.fn.strdisplaywidth(counter))
+  vim.api.nvim_buf_clear_namespace(state.floats.footer.buf, ns, 0, -1)
+  vim.api.nvim_buf_set_lines(state.floats.footer.buf, 0, -1, false, { left .. string.rep(" ", gap) .. counter })
+  dim_line(state.floats.footer.buf, 0)
 end
 
 --- Restore editor options and close every presentation float. Idempotent.
@@ -414,7 +521,7 @@ local open_overlay = function(lines, opts)
   return { buf = buf, win = win, close = close }
 end
 
--- "  12  Title  ·  first body line" — searchable, disambiguates reveal steps.
+-- "  12  Title  ·  first body line" - searchable, disambiguates reveal steps.
 local slide_label = function(slide, i)
   local title = slide.title ~= "" and slide.title or "(untitled)"
   local preview = ""
@@ -442,8 +549,53 @@ local open_picker = function()
   end, { buffer = overlay.buf })
 end
 
---- Fuzzy-search slide titles and jump. Uses fzf-lua if installed,
---- otherwise falls back to the built-in vim.ui.select.
+-- The markdown a preview pane should show for a given slide index.
+local slide_preview_lines = function(idx)
+  local slide = state.parsed.slides[idx]
+  if not slide then
+    return {}
+  end
+  local lines = {}
+  if slide.title ~= "" then
+    table.insert(lines, "# " .. slide.title)
+    table.insert(lines, "")
+  end
+  vim.list_extend(lines, slide.body)
+  return lines
+end
+
+-- Build an fzf-lua custom previewer that renders each slide on the right,
+-- Telescope/fzf style. Returns nil if the fzf-lua API isn't as expected.
+local build_slide_previewer = function()
+  local ok, builtin = pcall(require, "fzf-lua.previewer.builtin")
+  if not ok or not builtin.base then
+    return nil
+  end
+  local Slide = builtin.base:extend()
+
+  function Slide:new(o, opts)
+    Slide.super.new(self, o, opts)
+    setmetatable(self, Slide)
+    return self
+  end
+
+  function Slide:populate_preview_buf(entry_str)
+    local idx = tonumber(entry_str and entry_str:match("^%s*(%d+)"))
+    local buf = self:get_tmp_buffer()
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, slide_preview_lines(idx))
+    vim.bo[buf].filetype = "markdown"
+    self:set_preview_buf(buf)
+  end
+
+  function Slide:gen_winopts()
+    return vim.tbl_extend("keep", { wrap = true, number = false, cursorline = false }, self.winopts)
+  end
+
+  return Slide
+end
+
+--- Fuzzy-search slides with a preview pane. Uses fzf-lua if installed,
+--- otherwise falls back to the built-in vim.ui.select (no preview).
 local goto_search = function()
   local entries = {}
   for i, slide in ipairs(state.parsed.slides) do
@@ -457,9 +609,14 @@ local goto_search = function()
   end
   local ok, fzf = pcall(require, "fzf-lua")
   if ok then
+    local previewer = build_slide_previewer()
     fzf.fzf_exec(entries, {
       prompt = "Slides> ",
-      winopts = { title = " Search slides " },
+      previewer = previewer,
+      winopts = {
+        title = " Search slides ",
+        preview = { layout = "horizontal", horizontal = "right:55%" },
+      },
       actions = {
         ["default"] = function(selected)
           if selected and selected[1] then
@@ -532,10 +689,6 @@ local run_code = function(all)
   open_overlay(output, { title = "Run", width = 0.8, height = 0.8 })
 end
 
-----------------------------------------------------------------------
--- Start
-----------------------------------------------------------------------
-
 local present_keymap = function(mode, key, callback)
   vim.keymap.set(mode, key, callback, { buffer = state.floats.body.buf })
 end
@@ -554,11 +707,24 @@ M.start_presentation = function(opts)
   state.title = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(opts.bufnr), ":t")
   state.active = true
 
-  local windows = create_window_configurations()
+  -- Reserve the top banner line if any header text is configured. Fixed for the
+  -- whole deck so the body never shifts between slides.
+  state.banner = state.parsed.global.header ~= nil
+  for _, s in ipairs(state.parsed.slides) do
+    state.banner = state.banner or s.header ~= nil
+  end
+
+  -- Mini gray highlight for the configured header/footer text.
+  vim.api.nvim_set_hl(0, "PresentDim", { link = "Comment", default = true })
+
+  local windows = create_window_configurations(state.banner)
   state.floats.background = create_floating_window(windows.background)
   state.floats.header = create_floating_window(windows.header)
   state.floats.footer = create_floating_window(windows.footer)
   state.floats.body = create_floating_window(windows.body, true)
+  if state.banner then
+    state.floats.banner = create_floating_window(windows.banner)
+  end
 
   foreach_float(function(_, float)
     vim.bo[float.buf].filetype = "markdown"
@@ -596,7 +762,7 @@ M.start_presentation = function(opts)
   present_keymap("n", "s", show_notes)
   present_keymap("n", "?", function()
     open_overlay({
-      "# present.nvim — keys",
+      "# present.nvim - keys",
       "",
       "  n / <Space> / <Right>   next slide",
       "  p / b / <Left>          previous slide",
@@ -625,6 +791,8 @@ M.start_presentation = function(opts)
     wrap = { original = vim.o.wrap, present = true },
     breakindent = { original = vim.o.breakindent, present = true },
     breakindentopt = { original = vim.o.breakindentopt, present = "list:-1" },
+    laststatus = { original = vim.o.laststatus, present = 0 }, -- hide statusline
+    showtabline = { original = vim.o.showtabline, present = 0 }, -- hide tabline
   }
   for option, config in pairs(restore) do
     vim.opt[option] = config.present
@@ -643,7 +811,7 @@ M.start_presentation = function(opts)
       if not state.active or not vim.api.nvim_win_is_valid(state.floats.body.win) then
         return
       end
-      local updated = create_window_configurations()
+      local updated = create_window_configurations(state.banner)
       foreach_float(function(name, _)
         vim.api.nvim_win_set_config(state.floats[name].win, updated[name])
       end)
