@@ -1,7 +1,7 @@
 # present.nvim
 
-A minimal, hackable markdown slideshow for Neovim. Present a markdown buffer
-directly in floating windows - no external tooling, no build step.
+A minimal, hackable, image support markdown slideshow for Neovim. 
+Present a markdown buffer directly in floating windows - no external tooling, no build step.
 
 Originally inspired by [tjdevries/present.nvim](https://github.com/tjdevries/present.nvim),
 rewritten with a clearer, easier-to-type separator design and more features:
