@@ -1,0 +1,97 @@
+# present.nvim
+
+A minimal, hackable markdown slideshow for Neovim. Present a markdown buffer
+directly in floating windows — no external tooling, no build step.
+
+Originally inspired by [tjdevries/present.nvim](https://github.com/tjdevries/present.nvim),
+rewritten with a clearer, easier-to-type separator design and more features.
+
+## Separators
+
+The rule is simple: **a `>` prefix is a slide-level directive, no prefix is
+in-slide.**
+
+| Marker (own line) | Meaning |
+| --- | --- |
+| `># Title` (or `>##`, …) | new slide, with a title |
+| `>---` | new slide, no title |
+| `---` | in-slide reveal — the next chunk appears on the next keypress |
+| `#` / `##` / … heading | in-slide reveal (the heading is shown as content) |
+| `>// ...` | comment — dropped, never shown |
+| `Notes: ...` | speaker note — shown with `s`, never on the slide |
+
+### Example
+
+```markdown
+># Welcome
+This appears first.
+
+---
+This appears on the next keypress (in-slide reveal).
+
+## A sub-point
+This heading reveals too, and is shown as content.
+
+>// this is a private note-to-self, never rendered
+Notes: remember to breathe
+
+>---
+A brand new slide, with no title.
+
+​```lua
+print("press X to run me")
+​```
+```
+
+## Keys (during a presentation)
+
+| Key | Action |
+| --- | --- |
+| `n` / `<Space>` / `<Right>` | next |
+| `p` / `b` / `<Left>` | previous |
+| `gg` / `G` | first / last slide |
+| `{count}G` | jump to slide number |
+| `o` | slide overview / picker |
+| `X` / `A` | run first / all code blocks |
+| `s` | toggle speaker notes |
+| `?` | help |
+| `q` | quit |
+
+## Install (lazy.nvim)
+
+```lua
+{
+  "kunkka19xx/present.nvim", -- or a local `dir = ...`
+  cmd = "PresentStart",
+  ft = "markdown",
+  config = function()
+    require("present").setup {}
+  end,
+}
+```
+
+Then run `:PresentStart` on a markdown buffer.
+
+## Configuration
+
+```lua
+require("present").setup {
+  syntax = {
+    comment = ">//",              -- prefix for dropped comment lines
+    notes = "^[Nn]otes?:%s?",     -- Lua pattern for speaker-note lines
+    reveal_on_heading = true,     -- plain markdown headings reveal in-slide
+  },
+  center_vertical = true,         -- vertically center slide body
+  executors = {
+    -- language = function(block) return { "output", "lines" } end
+    -- built in: lua, javascript, typescript, python, bash, sh, go, rust
+  },
+}
+```
+
+## Code execution
+
+Put a fenced code block on a slide and press `X` (first block) or `A` (all
+blocks). Output opens in an overlay; the presentation stays running underneath.
+Add languages by supplying an executor — `require("present").create_system_executor("deno", ".ts")`
+builds one that writes the block to a temp file and runs a program on it.
