@@ -16,6 +16,7 @@ local executors = require("present.executors")
 ---@field footer string?            Prefix for footer text (">ft")
 ---@field comment string?           Prefix for dropped comment lines (">//")
 ---@field callout string?           Prefix opening a callout box (">!", e.g. ">!note")
+---@field qr string?                Prefix rendering the rest of the line as a QR code (">qr")
 ---@field notes string?             Prefix for speaker-note lines ("Notes:")
 ---@field reveal_on_heading boolean Treat plain markdown headings as in-slide reveals
 
@@ -23,6 +24,7 @@ local executors = require("present.executors")
 ---@field syntax present.Syntax
 ---@field center_vertical boolean   Center body vertically (else flow from top)
 ---@field top_padding integer       Blank lines above the body when not centering
+---@field spotlight boolean         Dim already-revealed chunks so the newest stands out
 ---@field executors table<string, fun(block: present.Block): string[]>
 
 local M = {}
@@ -37,11 +39,13 @@ M.defaults = {
     footer = ">ft", -- prefix: footer text (dim, along the bottom)
     comment = ">//", -- prefix: line dropped, never shown
     callout = ">!", -- prefix: callout box, e.g. `>!note text` (note/tip/warning/...)
+    qr = ">qr", -- prefix: render the rest of the line as a QR code (needs qrencode)
     notes = "Notes:", -- prefix: speaker note (shown with `s`)
     reveal_on_heading = true, -- also treat plain markdown headings as reveals
   },
   center_vertical = false, -- false: flow from top; true: center in the card
   top_padding = 1, -- blank lines above the body when not centering
+  spotlight = false, -- true: dim already-revealed chunks so the newest stands out
   executors = {
     lua = executors.lua,
     javascript = executors.create_system_executor("node"),

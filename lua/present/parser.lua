@@ -157,6 +157,18 @@ function M.parse(lines, syntax)
       end
     end
 
+    -- QR code (`>qr <text>`) ----------------------------------------
+    -- Left as a sentinel line; the impure render (qrencode) is expanded
+    -- after parsing so this function stays pure and testable.
+    do
+      local qr = after_token(raw, S.qr)
+      if qr ~= nil and qr ~= "" then
+        table.insert(current.body, "\1qr:" .. qr)
+        seen_content = true
+        goto continue
+      end
+    end
+
     -- New slide with a title (`>#`, `>##`, ...) --------------------
     do
       local title = after_token(raw, S.slide, true)
@@ -260,6 +272,16 @@ function M.parse(lines, syntax)
   end
   for _, s in ipairs(slides.slides) do
     s.anchor = group_max[s.group]
+  end
+
+  -- `reveal_start` = how many leading body lines were already visible on the
+  -- PREVIOUS reveal step of the same group. Spotlight dims those so the newest
+  -- chunk stands out. Snapshots within a group are ordered and prefix-extending,
+  -- so the previous snapshot's length is exactly the dim count.
+  local prev_len = {}
+  for _, s in ipairs(slides.slides) do
+    s.reveal_start = prev_len[s.group] or 0
+    prev_len[s.group] = #s.body
   end
 
   return slides

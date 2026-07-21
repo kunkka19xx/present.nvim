@@ -12,6 +12,8 @@ https://github.com/user-attachments/assets/2211f408-67e5-402c-80b4-a59e7e93bc1a
 - in-slide **reveals** that grow downward (no jumping)
 - **sticky titles** and configurable **header / footer** text
 - **callout boxes** (`>!note`, `>!tip`, `>!warning`, ...)
+- **QR code** slides (`>qr <text>`) rendered right in the terminal
+- **spotlight** reveals - dim earlier chunks so the newest one stands out
 - **hot reload** - edit the source, save, and the slide updates in place
 - **run** code blocks live (lua, js, ts, python, bash, sh, go, rust, or your own)
 - **fuzzy search** with a preview pane, a slide **picker**, and **speaker notes**
@@ -32,6 +34,7 @@ in-slide.**
 | `>ft <text>` | footer text, shown dim along the bottom |
 | `>// ...` | comment - dropped, never shown |
 | `>!note <text>` | callout box (`note` / `tip` / `warning` / `important` / ...) |
+| `>qr <text>` | render `<text>` (e.g. a URL) as a QR code on the slide |
 | `Notes: ...` | speaker note - shown with `s`, never on the slide |
 
 - **Sticky titles:** a `>#` title stays in the header across in-slide reveals and
@@ -135,12 +138,15 @@ require("present").setup {
     footer      = ">ft",      -- prefix: footer text (dim, along the bottom)
     comment     = ">//",      -- prefix: line dropped, never shown
     callout     = ">!",       -- prefix: callout box, e.g. `>!note text`
+    qr          = ">qr",      -- prefix: render the rest of the line as a QR code
     notes       = "Notes:",   -- prefix: speaker note (shown with `s`)
     reveal_on_heading = true, -- also treat plain markdown headings as reveals
   },
   center_vertical = false,        -- false: flow from the top; true: center the
                                   -- body (anchored so reveals grow downward)
   top_padding = 1,                -- blank lines above the body when not centering
+  spotlight = false,              -- true: dim already-revealed chunks so the
+                                  -- newest reveal stands out
   executors = {
     -- language = function(block) return { "output", "lines" } end
     -- built in: lua, javascript, typescript, python, bash, sh, go, rust
@@ -183,6 +189,27 @@ Press `r` to reload manually. Your position is kept (clamped if the slide count
 shrank), so tweak wording, save, and watch it update. (Adding or removing a
 `>hd` header after start won't re-lay-out the top banner - restart for that.)
 
+## QR codes
+
+`>qr <text>` renders the text (usually a URL) as a scannable QR code right in the
+terminal - no image protocol needed. It shells out to
+[`qrencode`](https://fukuchi.org/works/qrencode/) (`-t UTF8`), so install that
+first (`brew install qrencode`, `nix profile install nixpkgs#qrencode`, ...).
+Renders are cached, and if `qrencode` is missing the slide simply shows the text
+plus an install hint instead of breaking.
+
+```markdown
+># Scan me
+>qr https://github.com/kunkka19xx/present.nvim
+```
+
+## Spotlight
+
+With `spotlight = true`, each reveal step dims the chunks that were already on
+screen so the newest one is the bright, focused line - attention follows you down
+the slide instead of the audience reading ahead. Off by default; it only affects
+in-slide reveals (`---` / headings), not standalone slides.
+
 ## Project layout
 
 The code is small and split by concern so it stays easy to hack on:
@@ -193,6 +220,7 @@ The code is small and split by concern so it stays easy to hack on:
 | `lua/present/config.lua` | defaults + `setup()` |
 | `lua/present/parser.lua` | markdown -> slides (pure, testable) |
 | `lua/present/executors.lua` | code-block runners |
+| `lua/present/qr.lua` | `>qr` rendering via qrencode (cached) |
 | `lua/present/state.lua` | shared runtime state |
 | `lua/present/ui.lua` | floating windows + slide rendering |
 | `lua/present/overlays.lua` | picker, search, notes, run, help, confirm |

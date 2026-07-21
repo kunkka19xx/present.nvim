@@ -236,7 +236,8 @@ function M.help()
     "  >hd / >ft  header / footer text",
     "  >// ...     comment (dropped, never shown)",
     "  >!note ...  callout box (note/tip/warning/...)",
-  }, { title = "Help", width = 0.55, height = 0.75 })
+    "  >qr <text>  render text as a QR code",
+  }, { title = "Help", width = 0.55, height = 0.78 })
 end
 
 return M

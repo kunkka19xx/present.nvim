@@ -8,6 +8,7 @@
 ---   >hd / >ft ...  header / footer text (dim), global or per-slide
 ---   >// ...        comment line, dropped from the slide (never shown)
 ---   >!note ...     callout box (note/tip/warning/...); more lines until a blank
+---   >qr <text>     render the text as a QR code on the slide (needs qrencode)
 ---   Notes: ...     speaker note, shown with `s`, never on the slide
 ---
 --- Keys during a presentation:
@@ -27,6 +28,7 @@ local state = require("present.state")
 local ui = require("present.ui")
 local overlays = require("present.overlays")
 local executors = require("present.executors")
+local qr = require("present.qr")
 
 local M = {}
 
@@ -54,6 +56,7 @@ local function reload()
   if #parsed.slides == 0 then
     return
   end
+  qr.expand(parsed.slides)
   state.parsed = parsed
   ui.set_slide_content(state.current_slide) -- clamps to the new slide count
 end
@@ -71,6 +74,7 @@ M.start_presentation = function(opts)
     vim.notify("present: no slides found (use `># Title` or `>---`)", vim.log.levels.WARN)
     return
   end
+  qr.expand(state.parsed.slides)
   state.current_slide = 1
   state.title = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(source_buf), ":t")
   state.active = true

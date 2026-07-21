@@ -44,4 +44,8 @@ end
 | Callouts       | yes       | `>!note`, `>!tip`, ...          |
 | Tables         | yes       | this very slide                |
 
+># Scan me
+
+>qr https://github.com/kunkka19xx/present.nvim
+
 >// end of deck

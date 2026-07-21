@@ -8,7 +8,16 @@ local ns = vim.api.nvim_create_namespace("present-dim")
 function M.create_floating_window(cfg, enter)
   local buf = vim.api.nvim_create_buf(false, true)
   local win = vim.api.nvim_open_win(buf, enter or false, cfg)
+  vim.bo[buf].modifiable = false -- the deck is not editable while presenting
   return { buf = buf, win = win }
+end
+
+-- Replace a float's contents. The buffers are kept non-modifiable so the viewer
+-- can't type into the deck; we briefly unlock only for the plugin's own writes.
+local function set_lines(buf, lines)
+  vim.bo[buf].modifiable = true
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  vim.bo[buf].modifiable = false
 end
 
 --- Window configs for the deck. When `banner` is true a borderless dim header
@@ -87,11 +96,11 @@ function M.set_slide_content(idx)
 
   -- Title goes in the rounded box; the optional header text sits ABOVE it in
   -- the borderless banner (dim), outside the box.
-  vim.api.nvim_buf_set_lines(state.floats.header.buf, 0, -1, false, { M.centered(slide.title or "", width) })
+  set_lines(state.floats.header.buf, { M.centered(slide.title or "", width) })
   if state.floats.banner then
     local eff_header = slide.header or global.header or ""
     vim.api.nvim_buf_clear_namespace(state.floats.banner.buf, ns, 0, -1)
-    vim.api.nvim_buf_set_lines(state.floats.banner.buf, 0, -1, false, { M.centered(eff_header, width) })
+    set_lines(state.floats.banner.buf, { M.centered(eff_header, width) })
     if eff_header ~= "" then
       dim_line(state.floats.banner.buf, 0)
     end
@@ -105,19 +114,51 @@ function M.set_slide_content(idx)
   -- Vertical placement. Default: flow from the top with a small gap. Optional
   -- center_vertical anchors to the group's fullest reveal so the top stays put
   -- and reveals grow downward, rather than the whole block jumping.
+  local first_is_table = body[1] ~= nil and body[1]:match("^%s*|") ~= nil
+
+  local pad = 0
   if opts.center_vertical then
     local body_height = vim.api.nvim_win_get_height(state.floats.body.win)
     local anchor = slide.anchor or #body
-    local pad = math.max(0, math.floor((body_height - anchor) / 2))
-    for _ = 1, pad do
-      table.insert(body, 1, "")
-    end
+    pad = math.max(0, math.floor((body_height - anchor) / 2))
   else
-    for _ = 1, math.max(0, opts.top_padding or 0) do
-      table.insert(body, 1, "")
+    pad = math.max(0, opts.top_padding or 0)
+  end
+  -- Always keep a blank line at the very top for the cursor to rest on (below the
+  -- title). render-markdown's anti-conceal shows the RAW text of the cursor's
+  -- line, so parking on a blank, un-rendered line keeps every slide fully drawn.
+  -- A leading table needs TWO blank lines: render-markdown draws the table's top
+  -- border on the blank line directly above it, so that border line must be a
+  -- different blank line than the one the cursor sits on.
+  pad = math.max(pad, 1)
+  if first_is_table then
+    pad = math.max(pad, 2)
+  end
+  for _ = 1, pad do
+    table.insert(body, 1, "")
+  end
+  set_lines(state.floats.body.buf, body)
+
+  -- Cursor on the top blank line: nothing renders there, and the view stays
+  -- anchored at the top (no scrolling, even for tall slides).
+  if vim.api.nvim_win_is_valid(state.floats.body.win) then
+    pcall(vim.api.nvim_win_set_cursor, state.floats.body.win, { 1, 0 })
+  end
+
+  -- Spotlight: dim the lines carried over from the previous reveal step so the
+  -- newest chunk is the bright one. `reveal_start` counts those leading lines.
+  vim.api.nvim_buf_clear_namespace(state.floats.body.buf, ns, 0, -1)
+  if opts.spotlight then
+    local dim = math.min(slide.reveal_start or 0, #slide.body)
+    for row = pad, pad + dim - 1 do
+      pcall(vim.api.nvim_buf_set_extmark, state.floats.body.buf, ns, row, 0, {
+        end_row = row + 1,
+        hl_group = "PresentDim",
+        hl_eol = true,
+        priority = 300,
+      })
     end
   end
-  vim.api.nvim_buf_set_lines(state.floats.body.buf, 0, -1, false, body)
 
   -- Footer: user text on the left, a small page counter on the right. Both dim.
   local eff_footer = slide.footer or global.footer or ""
@@ -125,7 +166,7 @@ function M.set_slide_content(idx)
   local left = eff_footer ~= "" and (" " .. eff_footer) or ""
   local gap = math.max(1, width - vim.fn.strdisplaywidth(left) - vim.fn.strdisplaywidth(counter))
   vim.api.nvim_buf_clear_namespace(state.floats.footer.buf, ns, 0, -1)
-  vim.api.nvim_buf_set_lines(state.floats.footer.buf, 0, -1, false, { left .. string.rep(" ", gap) .. counter })
+  set_lines(state.floats.footer.buf, { left .. string.rep(" ", gap) .. counter })
   dim_line(state.floats.footer.buf, 0)
 end
 
