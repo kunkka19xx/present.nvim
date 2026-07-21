@@ -8,5 +8,5 @@ return {
   title = "", -- deck file name (unused in chrome, kept for reference)
   active = false,
   banner = false, -- whether a top header line is reserved for the deck
-  restore = {}, -- editor options saved on start, restored on teardown
+  restore = {}, -- option name -> pre-presentation value, put back on teardown
 }

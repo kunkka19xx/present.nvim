@@ -43,6 +43,28 @@ local function present_keymap(mode, key, callback)
   vim.keymap.set(mode, key, callback, { buffer = state.floats.body.buf })
 end
 
+-- Editor options that change for the duration of a presentation, mapped to the
+-- value they take while presenting. Whatever they held before is snapshotted
+-- into `state.restore` on start and put back on teardown.
+local PRESENTING_OPTIONS = {
+  cmdheight = 0, -- no command line eating a row
+  guicursor = "n:NormalFloat", -- cursor blends into the slide background
+  wrap = true, -- long prose lines wrap instead of running off
+  breakindent = true,
+  breakindentopt = "list:-1", -- wrapped list items stay hanging-indented
+  laststatus = 0, -- hide the statusline
+  showtabline = 0, -- hide the tabline
+}
+
+--- Switch the editor into presentation mode, remembering the previous values.
+local function enter_presenting_options()
+  state.restore = {}
+  for name, presenting in pairs(PRESENTING_OPTIONS) do
+    state.restore[name] = vim.o[name]
+    vim.o[name] = presenting
+  end
+end
+
 --- Re-parse the source buffer and re-render the current slide in place. Used by
 --- hot reload (the `r` key and `:w` on the source). Keeps the current position
 --- (clamped) so edits show up without leaving the presentation. A brand-new
@@ -140,18 +162,7 @@ M.start_presentation = function(opts)
   present_keymap("n", "q", overlays.confirm_quit)
 
   -- Editor options during the presentation (restored on teardown) ---
-  state.restore = {
-    cmdheight = { original = vim.o.cmdheight, present = 0 },
-    guicursor = { original = vim.o.guicursor, present = "n:NormalFloat" },
-    wrap = { original = vim.o.wrap, present = true },
-    breakindent = { original = vim.o.breakindent, present = true },
-    breakindentopt = { original = vim.o.breakindentopt, present = "list:-1" },
-    laststatus = { original = vim.o.laststatus, present = 0 }, -- hide statusline
-    showtabline = { original = vim.o.showtabline, present = 0 }, -- hide tabline
-  }
-  for option, cfg in pairs(state.restore) do
-    vim.opt[option] = cfg.present
-  end
+  enter_presenting_options()
 
   -- Teardown follows the body WINDOW closing (not focus loss) so overlays are safe.
   vim.api.nvim_create_autocmd("WinClosed", {
@@ -167,18 +178,10 @@ M.start_presentation = function(opts)
     callback = reload,
   })
 
+  -- Terminal resized: re-fit the floats and redraw (ui owns the geometry).
   vim.api.nvim_create_autocmd("VimResized", {
     group = vim.api.nvim_create_augroup("present-resized", { clear = true }),
-    callback = function()
-      if not state.active or not vim.api.nvim_win_is_valid(state.floats.body.win) then
-        return
-      end
-      local updated = ui.window_configurations(state.banner)
-      ui.foreach_float(function(name, _)
-        vim.api.nvim_win_set_config(state.floats[name].win, updated[name])
-      end)
-      ui.set_slide_content(state.current_slide)
-    end,
+    callback = ui.relayout,
   })
 
   ui.set_slide_content(state.current_slide)

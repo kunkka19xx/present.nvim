@@ -5,11 +5,16 @@ local config = require("present.config")
 local M = {}
 local ns = vim.api.nvim_create_namespace("present-dim")
 
+-- Back-to-front order of the deck's floats. Iterating a fixed list (rather than
+-- hashing over `state.floats`) keeps resize and teardown deterministic.
+local FLOAT_ORDER = { "background", "banner", "header", "body", "footer" }
+
+--- Open a scratch-backed float. The buffer starts non-modifiable so a stray
+--- keypress can't edit the deck; `set_lines` unlocks briefly to write.
 function M.create_floating_window(cfg, enter)
   local buf = vim.api.nvim_create_buf(false, true)
-  local win = vim.api.nvim_open_win(buf, enter or false, cfg)
-  vim.bo[buf].modifiable = false -- the deck is not editable while presenting
-  return { buf = buf, win = win }
+  vim.bo[buf].modifiable = false
+  return { buf = buf, win = vim.api.nvim_open_win(buf, enter == true, cfg) }
 end
 
 -- Replace a float's contents. The buffers are kept non-modifiable so the viewer
@@ -20,50 +25,78 @@ local function set_lines(buf, lines)
   vim.bo[buf].modifiable = false
 end
 
---- Window configs for the deck. When `banner` is true a borderless dim header
---- line sits ABOVE the title box (row 0). The banner is reserved for the whole
---- deck so the body never shifts between slides.
+--- Geometry for the deck's floats, laid out top to bottom:
+---
+---   row 0            banner    optional dim header text, borderless, no box
+---   row banner..+2   header    the title, inside a rounded box (3 rows)
+---   row body_top..   body      slide content, inset horizontally, no border
+---   last row         footer    user footer text + page counter
+---
+--- The banner row is reserved for the whole deck whenever any header text
+--- exists, so the body never shifts as you move between slides.
 function M.window_configurations(banner)
-  local width = vim.o.columns
-  local height = vim.o.lines
-  local banner_h = banner and 1 or 0
-  -- Body sits directly under the title box (banner + top border + title + bottom
-  -- border). No body border, so the only gap under the title is `top_padding`.
-  local body_row = banner_h + 3
-  local body_height = height - body_row - 2
+  local cols, rows = vim.o.columns, vim.o.lines
+  local banner_rows = banner and 1 or 0
+  local title_rows = 3 -- one line of text plus the rounded border above/below
+  local body_top = banner_rows + title_rows
+  local side_inset = 8
+
+  -- Full-width, borderless, editor-relative strip - the shape of every float
+  -- here except the body.
+  local function strip(row, height, zindex)
+    return {
+      relative = "editor",
+      style = "minimal",
+      width = cols,
+      height = height,
+      col = 0,
+      row = row,
+      zindex = zindex,
+    }
+  end
 
   local cfg = {
-    background = { relative = "editor", width = width, height = height, style = "minimal", col = 0, row = 0, zindex = 1 },
-    header = {
-      relative = "editor",
-      width = width,
-      height = 1,
-      style = "minimal",
-      border = "rounded",
-      col = 0,
-      row = banner_h,
-      zindex = 2,
-    },
+    background = strip(0, rows, 1),
+    header = vim.tbl_extend("force", strip(banner_rows, 1, 2), { border = "rounded" }),
+    footer = strip(rows - 1, 1, 3),
     body = {
       relative = "editor",
-      width = width - 16,
-      height = body_height,
       style = "minimal",
-      col = 8,
-      row = body_row,
+      width = cols - side_inset * 2,
+      height = rows - body_top - 2,
+      col = side_inset,
+      row = body_top,
     },
-    footer = { relative = "editor", width = width, height = 1, style = "minimal", col = 0, row = height - 1, zindex = 3 },
   }
   if banner then
-    cfg.banner = { relative = "editor", width = width, height = 1, style = "minimal", col = 0, row = 0, zindex = 2 }
+    cfg.banner = strip(0, 1, 2)
   end
   return cfg
 end
 
+--- Run `cb(name, float)` over the live floats, back to front.
 function M.foreach_float(cb)
-  for name, float in pairs(state.floats) do
-    cb(name, float)
+  for _, name in ipairs(FLOAT_ORDER) do
+    local float = state.floats[name]
+    if float then
+      cb(name, float)
+    end
   end
+end
+
+--- Re-fit every float to the current terminal size and redraw the slide. Called
+--- on VimResized; a no-op once the presentation is gone.
+function M.relayout()
+  if not state.active or not vim.api.nvim_win_is_valid(state.floats.body.win) then
+    return
+  end
+  local cfg = M.window_configurations(state.banner)
+  M.foreach_float(function(name, float)
+    if cfg[name] then
+      pcall(vim.api.nvim_win_set_config, float.win, cfg[name])
+    end
+  end)
+  M.set_slide_content(state.current_slide)
 end
 
 --- Left-pad `text` so it is centered within `width` columns.
@@ -176,11 +209,12 @@ function M.end_presentation()
     return
   end
   state.active = false
-  for option, cfg in pairs(state.restore) do
+  for name, original in pairs(state.restore) do
     pcall(function()
-      vim.opt[option] = cfg.original
+      vim.o[name] = original
     end)
   end
+  state.restore = {}
   M.foreach_float(function(_, float)
     pcall(vim.api.nvim_win_close, float.win, true)
   end)
