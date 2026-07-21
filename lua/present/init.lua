@@ -197,6 +197,10 @@ local parse_slides = function(lines)
   local notes = options.syntax.notes
   local reveal_on_heading = options.syntax.reveal_on_heading
 
+  -- Titles are "sticky": once `>#` sets one it stays in the header across
+  -- reveals AND `>---` pages, until the next `>#` changes it.
+  local last_title = ""
+
   for _, raw in ipairs(lines) do
     local trimmed = (raw:gsub("%s*$", ""))
     local fence = raw:match("^%s*```(%S*)") or raw:match("^%s*~~~(%S*)")
@@ -224,6 +228,7 @@ local parse_slides = function(lines)
       if title ~= nil then
         push(current)
         current = new_slide()
+        last_title = title
         current.title = title
         goto continue
       end
@@ -231,6 +236,7 @@ local parse_slides = function(lines)
     if raw:match(PAT.slide_break) then
       push(current)
       current = new_slide()
+      current.title = last_title -- carry the title onto the new page
       goto continue
     end
 
@@ -347,7 +353,7 @@ local set_slide_content = function(idx)
   end
   vim.api.nvim_buf_set_lines(state.floats.body.buf, 0, -1, false, body)
 
-  local hint = "  n/p move · o overview · X/A run · s notes · ? help · q quit"
+  local hint = "  n/p move · / search · o overview · X/A run · s notes · ? help · q quit"
   local left = string.format("  %d / %d | %s", idx, #state.parsed.slides, state.title)
   if #slide.notes > 0 then
     left = left .. "  ●notes"
@@ -408,27 +414,85 @@ local open_overlay = function(lines, opts)
   return { buf = buf, win = win, close = close }
 end
 
+-- "  12  Title  ·  first body line" — searchable, disambiguates reveal steps.
+local slide_label = function(slide, i)
+  local title = slide.title ~= "" and slide.title or "(untitled)"
+  local preview = ""
+  for _, l in ipairs(slide.body) do
+    local t = vim.trim(l)
+    if t ~= "" and not t:match("^```") then
+      preview = t
+      break
+    end
+  end
+  return string.format("%3d  %s  ·  %s", i, title, preview)
+end
+
 local open_picker = function()
   local items = {}
   for i, slide in ipairs(state.parsed.slides) do
-    local label = slide.title
-    if label == "" then
-      for _, l in ipairs(slide.body) do
-        if vim.trim(l) ~= "" then
-          label = vim.trim(l)
-          break
-        end
-      end
-    end
-    table.insert(items, string.format("%3d  %s", i, label))
+    table.insert(items, slide_label(slide, i))
   end
-  local overlay = open_overlay(items, { title = "Slides", filetype = "text", width = 0.5 })
+  local overlay = open_overlay(items, { title = "Slides", filetype = "text", width = 0.6 })
   vim.api.nvim_win_set_cursor(overlay.win, { state.current_slide, 0 })
   vim.keymap.set("n", "<CR>", function()
     local row = vim.api.nvim_win_get_cursor(overlay.win)[1]
     overlay.close()
     set_slide_content(row)
   end, { buffer = overlay.buf })
+end
+
+--- Fuzzy-search slide titles and jump. Uses fzf-lua if installed,
+--- otherwise falls back to the built-in vim.ui.select.
+local goto_search = function()
+  local entries = {}
+  for i, slide in ipairs(state.parsed.slides) do
+    table.insert(entries, slide_label(slide, i))
+  end
+  local jump = function(line)
+    local idx = tonumber(line and line:match("^%s*(%d+)"))
+    if idx then
+      set_slide_content(idx)
+    end
+  end
+  local ok, fzf = pcall(require, "fzf-lua")
+  if ok then
+    fzf.fzf_exec(entries, {
+      prompt = "Slides> ",
+      winopts = { title = " Search slides " },
+      actions = {
+        ["default"] = function(selected)
+          if selected and selected[1] then
+            jump(selected[1])
+            if state.active and vim.api.nvim_win_is_valid(state.floats.body.win) then
+              vim.api.nvim_set_current_win(state.floats.body.win)
+            end
+          end
+        end,
+      },
+    })
+  else
+    vim.ui.select(entries, { prompt = "Go to slide" }, function(choice)
+      if choice then
+        jump(choice)
+      end
+    end)
+  end
+end
+
+--- Ask before quitting the presentation.
+local confirm_quit = function()
+  local ov = open_overlay(
+    { "", "  Quit the presentation?", "", "  [y] yes       [n] no", "" },
+    { title = "Confirm", filetype = "text", width = 0.3, height = 0.28 }
+  )
+  vim.keymap.set("n", "y", function()
+    ov.close()
+    if vim.api.nvim_win_is_valid(state.floats.body.win) then
+      vim.api.nvim_win_close(state.floats.body.win, true)
+    end
+  end, { buffer = ov.buf })
+  vim.keymap.set("n", "n", ov.close, { buffer = ov.buf })
 end
 
 local show_notes = function()
@@ -522,6 +586,7 @@ M.start_presentation = function(opts)
     set_slide_content(n > 0 and n or #state.parsed.slides)
   end)
   present_keymap("n", "o", open_picker)
+  present_keymap("n", "/", goto_search)
   present_keymap("n", "X", function()
     run_code(false)
   end)
@@ -537,10 +602,11 @@ M.start_presentation = function(opts)
       "  p / b / <Left>          previous slide",
       "  gg / G                  first / last slide",
       "  {count}G                jump to slide {count}",
+      "  /                       fuzzy-search slide titles",
       "  o                       slide overview / picker",
       "  X / A                   run first / all code blocks",
       "  s                       toggle speaker notes",
-      "  ? / q                   help / quit",
+      "  ? / q                   help / quit (q confirms y/n)",
       "",
       "# separators",
       "",
@@ -551,9 +617,7 @@ M.start_presentation = function(opts)
       "  >// ...     comment (dropped, never shown)",
     }, { title = "Help", width = 0.55, height = 0.7 })
   end)
-  present_keymap("n", "q", function()
-    vim.api.nvim_win_close(state.floats.body.win, true)
-  end)
+  present_keymap("n", "q", confirm_quit)
 
   restore = {
     cmdheight = { original = vim.o.cmdheight, present = 0 },

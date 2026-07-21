@@ -51,11 +51,15 @@ print("press X to run me")
 | `p` / `b` / `<Left>` | previous |
 | `gg` / `G` | first / last slide |
 | `{count}G` | jump to slide number |
+| `/` | fuzzy-search slide titles (uses fzf-lua if installed) |
 | `o` | slide overview / picker |
 | `X` / `A` | run first / all code blocks |
 | `s` | toggle speaker notes |
 | `?` | help |
-| `q` | quit |
+| `q` | quit (asks for confirmation, `y`/`n`) |
+
+Titles are **sticky**: a `>#` title stays in the header across in-slide reveals
+and `>---` pages until the next `>#` changes it.
 
 ## Install (lazy.nvim)
 
