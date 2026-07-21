@@ -6,6 +6,8 @@ directly in floating windows - no external tooling, no build step.
 Originally inspired by [tjdevries/present.nvim](https://github.com/tjdevries/present.nvim),
 rewritten with a clearer, easier-to-type separator design and more features:
 
+https://github.com/user-attachments/assets/2211f408-67e5-402c-80b4-a59e7e93bc1a
+
 - `>`-prefixed markers that never collide with the markdown you render
 - in-slide **reveals** that grow downward (no jumping)
 - **sticky titles** and configurable **header / footer** text
