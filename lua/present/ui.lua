@@ -34,10 +34,17 @@ end
 ---
 --- The banner row is reserved for the whole deck whenever any header text
 --- exists, so the body never shifts as you move between slides.
-function M.window_configurations(banner)
+---
+--- The title box, by contrast, is per-slide: an untitled slide would otherwise
+--- show an empty rounded box, so it is hidden and the body claims those three
+--- rows. Reveal steps within a group all carry the same title, so this can
+--- never shift the body mid-reveal.
+---@param banner boolean  reserve the deck-wide banner row
+---@param titled boolean  show the title box (false for a slide with no title)
+function M.window_configurations(banner, titled)
   local cols, rows = vim.o.columns, vim.o.lines
   local banner_rows = banner and 1 or 0
-  local title_rows = 3 -- one line of text plus the rounded border above/below
+  local title_rows = titled and 3 or 0 -- text line plus the rounded border above/below
   local body_top = banner_rows + title_rows
   local side_inset = 8
 
@@ -57,7 +64,7 @@ function M.window_configurations(banner)
 
   local cfg = {
     background = strip(0, rows, 1),
-    header = vim.tbl_extend("force", strip(banner_rows, 1, 2), { border = "rounded" }),
+    header = vim.tbl_extend("force", strip(banner_rows, 1, 2), { border = "rounded", hide = not titled }),
     footer = strip(rows - 1, 1, 3),
     body = {
       relative = "editor",
@@ -90,7 +97,7 @@ function M.relayout()
   if not state.active or not vim.api.nvim_win_is_valid(state.floats.body.win) then
     return
   end
-  local cfg = M.window_configurations(state.banner)
+  local cfg = M.window_configurations(state.banner, state.titled)
   M.foreach_float(function(name, float)
     if cfg[name] then
       pcall(vim.api.nvim_win_set_config, float.win, cfg[name])
@@ -114,6 +121,19 @@ local function dim_line(buf, line)
   })
 end
 
+--- Show or hide the title box for the slide about to be drawn, handing its three
+--- rows to the body when there is no title. Only touches the windows when the
+--- state actually flips, so ordinary navigation reconfigures nothing.
+local function set_chrome(titled)
+  if state.titled == titled then
+    return
+  end
+  state.titled = titled
+  local cfg = M.window_configurations(state.banner, titled)
+  pcall(vim.api.nvim_win_set_config, state.floats.header.win, cfg.header)
+  pcall(vim.api.nvim_win_set_config, state.floats.body.win, cfg.body)
+end
+
 --- Render slide `idx` into the header/banner/body/footer floats.
 function M.set_slide_content(idx)
   if not state.active then
@@ -128,7 +148,9 @@ function M.set_slide_content(idx)
   local width = vim.o.columns
 
   -- Title goes in the rounded box; the optional header text sits ABOVE it in
-  -- the borderless banner (dim), outside the box.
+  -- the borderless banner (dim), outside the box. An untitled slide drops the
+  -- box entirely rather than showing an empty one.
+  set_chrome((slide.title or "") ~= "")
   set_lines(state.floats.header.buf, { M.centered(slide.title or "", width) })
   if state.floats.banner then
     local eff_header = slide.header or global.header or ""
@@ -178,9 +200,21 @@ function M.set_slide_content(idx)
     pcall(vim.api.nvim_win_set_cursor, state.floats.body.win, { 1, 0 })
   end
 
+  vim.api.nvim_buf_clear_namespace(state.floats.body.buf, ns, 0, -1)
+
+  -- Colour the lines an expanded `>img` produced. These carry the picture: for
+  -- chafa art the per-cell foreground/background, for kitty placeholders the
+  -- image id. Rows are body-relative, so shift them past the top padding.
+  for _, mark in ipairs(slide.image_marks or {}) do
+    pcall(vim.api.nvim_buf_set_extmark, state.floats.body.buf, ns, pad + mark.row, mark.col, {
+      end_col = mark.end_col,
+      hl_group = mark.hl,
+      priority = mark.priority,
+    })
+  end
+
   -- Spotlight: dim the lines carried over from the previous reveal step so the
   -- newest chunk is the bright one. `reveal_start` counts those leading lines.
-  vim.api.nvim_buf_clear_namespace(state.floats.body.buf, ns, 0, -1)
   if opts.spotlight then
     local dim = math.min(slide.reveal_start or 0, #slide.body)
     for row = pad, pad + dim - 1 do
@@ -209,6 +243,7 @@ function M.end_presentation()
     return
   end
   state.active = false
+  state.titled = nil
   for name, original in pairs(state.restore) do
     pcall(function()
       vim.o[name] = original

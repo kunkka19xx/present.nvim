@@ -8,5 +8,6 @@ return {
   title = "", -- deck file name (unused in chrome, kept for reference)
   active = false,
   banner = false, -- whether a top header line is reserved for the deck
+  titled = nil, -- whether the title box is currently shown (nil = not yet decided)
   restore = {}, -- option name -> pre-presentation value, put back on teardown
 }

@@ -13,6 +13,7 @@ https://github.com/user-attachments/assets/2211f408-67e5-402c-80b4-a59e7e93bc1a
 - **sticky titles** and configurable **header / footer** text
 - **callout boxes** (`>!note`, `>!tip`, `>!warning`, ...)
 - **QR code** slides (`>qr <text>`) rendered right in the terminal
+- **images** (`>img <path>`) - true terminal graphics, cell art everywhere else
 - **spotlight** reveals - dim earlier chunks so the newest one stands out
 - **hot reload** - edit the source, save, and the slide updates in place
 - **run** code blocks live (lua, js, ts, python, bash, sh, go, rust, or your own)
@@ -27,7 +28,8 @@ in-slide.**
 | Marker (own line) | Meaning |
 | --- | --- |
 | `># Title` (also `>##`, `>###`) | new slide, with a title |
-| `>---` | new slide, no title |
+| `>---` | new slide, keeps the current title |
+| `>#` (bare) | new slide, clears the title (no title box) |
 | `---` | in-slide reveal - the next chunk appears on the next keypress |
 | `#` / `##` / ... heading | in-slide reveal (the heading is shown as content) |
 | `>hd <text>` | header text, shown dim above the title (outside the box) |
@@ -35,10 +37,14 @@ in-slide.**
 | `>// ...` | comment - dropped, never shown |
 | `>!note <text>` | callout box (`note` / `tip` / `warning` / `important` / ...) |
 | `>qr <text>` | render `<text>` (e.g. a URL) as a QR code on the slide |
+| `>img <path> [w]` | render an image file, `w` cells wide (default 40) |
 | `Notes: ...` | speaker note - shown with `s`, never on the slide |
 
 - **Sticky titles:** a `>#` title stays in the header across in-slide reveals and
-  `>---` pages until the next `>#` changes it.
+  `>---` pages until the next `>#` changes it. A bare `>#` (no text) clears it.
+- **Untitled slides:** a slide with no title drops the rounded title box entirely
+  rather than showing an empty one, and its body claims those three rows. Reveal
+  steps always share their slide's title, so this never shifts the body mid-reveal.
 - **Header / footer scope:** `>hd` / `>ft` placed **above the first slide** are
   global (every slide); placed **inside a slide** they override just that slide.
   There is no fixed hint bar - the footer is yours (a small `page/total` counter
@@ -139,6 +145,7 @@ require("present").setup {
     comment     = ">//",      -- prefix: line dropped, never shown
     callout     = ">!",       -- prefix: callout box, e.g. `>!note text`
     qr          = ">qr",      -- prefix: render the rest of the line as a QR code
+    image       = ">img",     -- prefix: render an image, `>img <path> [width]`
     notes       = "Notes:",   -- prefix: speaker note (shown with `s`)
     reveal_on_heading = true, -- also treat plain markdown headings as reveals
   },
@@ -147,6 +154,13 @@ require("present").setup {
   top_padding = 1,                -- blank lines above the body when not centering
   spotlight = false,              -- true: dim already-revealed chunks so the
                                   -- newest reveal stands out
+  image = {
+    backend = "auto",             -- "auto" probes the terminal; force with
+                                  -- "kitty" / "chafa", or "off" for a stand-in
+    width = 40,                   -- default width in cells (`>img p.png 60` wins)
+    max_height = 0,               -- cap the height in cells, 0 = uncapped
+    cell_aspect = 2.0,            -- cell height / width; raise if images squash
+  },
   executors = {
     -- language = function(block) return { "output", "lines" } end
     -- built in: lua, javascript, typescript, python, bash, sh, go, rust
@@ -203,6 +217,97 @@ plus an install hint instead of breaking.
 >qr https://github.com/kunkka19xx/present.nvim
 ```
 
+## Images
+
+`>img <path> [width]` puts a picture on the slide. The path is resolved relative
+to **the deck file**, so a deck travels with its assets, and `width` is in
+terminal cells (default 40; the height follows the image's aspect ratio).
+
+```markdown
+># Architecture
+>img diagrams/pipeline.png 60
+```
+
+### What you need to install
+
+Nothing, if you only want cell art in a terminal that already has `chafa`. The
+table below is the whole dependency story - `>img` is the only feature in this
+plugin with external requirements, and it degrades instead of failing.
+
+| You want | You need | Install |
+| --- | --- | --- |
+| **Real images** | kitty **0.28+** or **Ghostty** | already have it, or `brew install --cask ghostty` |
+| **Cell art** (anywhere else) | [`chafa`](https://hpjansson.org/chafa/) | `brew install chafa` · `apt install chafa` · `dnf install chafa` · `pacman -S chafa` · `nix profile install nixpkgs#chafa` |
+| Nothing installed | - | the slide shows `[image: path]` and the deck runs fine |
+
+**Only kitty and Ghostty render real images here.** That is narrower than the
+list of terminals supporting the kitty graphics protocol, because this plugin
+uses *unicode placeholders*, a separate part of the spec. WezTerm speaks the
+graphics protocol fluently but does **not** implement placeholders (checked by
+hand: you get a block of tofu, not a picture); iTerm2 and Konsole are the same.
+Those terminals get `chafa` instead - which is the right outcome, so don't force
+`backend = "kitty"` there.
+
+One editor setting is also required, because the placeholder cells carry the
+image id as an exact 24-bit foreground color:
+
+```lua
+vim.o.termguicolors = true
+```
+
+Without it (or, under tmux, without the setting in the next section) `auto`
+quietly falls back to `chafa` rather than drawing something broken.
+
+### If you use tmux
+
+tmux is fully supported - that is *why* this plugin uses unicode placeholders
+rather than painting pixels over the terminal. You need **tmux 3.3 or newer**
+(`tmux -V`) and one line in `~/.tmux.conf`:
+
+```tmux
+set -g allow-passthrough on
+```
+
+It is **off by default**, and without it tmux swallows the graphics escapes
+instead of forwarding them to the terminal. After adding it, reload with
+`tmux source-file ~/.tmux.conf`; if tmux was already running you may need to
+restart the server (`tmux kill-server`) for a stale value to clear.
+
+Check what you have:
+
+```sh
+tmux -V                              # need 3.3+
+tmux show -gv allow-passthrough      # want: on
+```
+
+tmux 3.4+ also accepts `all`, which additionally allows passthrough from panes
+that aren't currently visible. `on` is enough here, since a deck transmits its
+images while you're looking at it.
+
+Two things that are *not* required, but often assumed to be: you do **not** need
+to change `default-terminal`, and you do **not** need a terminal-specific
+`terminal-overrides` entry. Placeholder cells are ordinary text as far as tmux is
+concerned, so it tracks and redraws them correctly with no extra help.
+
+### How it works, and why
+
+The `kitty` path hands the image to the terminal once, then the slide holds
+ordinary text cells (`U+10EEEE`, the row as a combining diacritic, the image id
+as the foreground color) that the terminal paints over. Because they are real
+buffer lines, the image flows through the normal render path and picks up
+`top_padding`, reveals and spotlight for free - and tmux tracks them as text, so
+there is no smearing and no re-emit-on-redraw hack.
+
+Only PNGs take that path; every other format (jpeg, gif, webp, ...) is decoded by
+`chafa`. Renders are cached per file, size and modification time, so hot reload
+picks up an image you edited outside the editor.
+
+Force a renderer with `image.backend` if `auto` guesses wrong:
+
+```lua
+require("present").setup { image = { backend = "chafa" } }  -- or "kitty" / "off"
+```
+
 ## Spotlight
 
 With `spotlight = true`, each reveal step dims the chunks that were already on
@@ -221,6 +326,7 @@ The code is small and split by concern so it stays easy to hack on:
 | `lua/present/parser.lua` | markdown -> slides (pure, testable) |
 | `lua/present/executors.lua` | code-block runners |
 | `lua/present/qr.lua` | `>qr` rendering via qrencode (cached) |
+| `lua/present/image.lua` | `>img` rendering (kitty graphics / chafa, cached) |
 | `lua/present/state.lua` | shared runtime state |
 | `lua/present/ui.lua` | floating windows + slide rendering |
 | `lua/present/overlays.lua` | picker, search, notes, run, help, confirm |
@@ -229,8 +335,3 @@ The code is small and split by concern so it stays easy to hack on:
 `require("present")._parse_slides(lines)` returns the parsed slide table, handy
 for testing the parser in isolation.
 
-## Not (yet) supported
-
-Inline images. Neovim can't draw images itself; it needs a terminal graphics
-plugin (e.g. `image.nvim`) that bypasses the renderer. Kept out to stay
-dependency-free - see the discussion in the plugin's issues if you want it.

@@ -237,6 +237,7 @@ function M.help()
     "  >// ...     comment (dropped, never shown)",
     "  >!note ...  callout box (note/tip/warning/...)",
     "  >qr <text>  render text as a QR code",
+    "  >img <path> [w]  render an image, w cells wide",
   }, { title = "Help", width = 0.55, height = 0.78 })
 end
 

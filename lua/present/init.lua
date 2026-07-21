@@ -9,6 +9,7 @@
 ---   >// ...        comment line, dropped from the slide (never shown)
 ---   >!note ...     callout box (note/tip/warning/...); more lines until a blank
 ---   >qr <text>     render the text as a QR code on the slide (needs qrencode)
+---   >img <path> [w] render an image file, w cells wide (kitty graphics / chafa)
 ---   Notes: ...     speaker note, shown with `s`, never on the slide
 ---
 --- Keys during a presentation:
@@ -29,8 +30,21 @@ local ui = require("present.ui")
 local overlays = require("present.overlays")
 local executors = require("present.executors")
 local qr = require("present.qr")
+local image = require("present.image")
 
 local M = {}
+
+--- Expand the parser's inert sentinel lines (`>qr`, `>img`) into real content.
+--- Both turn one line into many, so the layout measurements have to be redone
+--- against the expanded bodies.
+---@param parsed present.Slides
+---@param source_buf integer
+local function expand_media(parsed, source_buf)
+  qr.expand(parsed.slides)
+  local dir = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(source_buf), ":p:h")
+  image.expand(parsed.slides, dir)
+  parser.measure(parsed.slides)
+end
 
 --- Configure the plugin (optional - sensible defaults otherwise).
 M.setup = config.setup
@@ -78,7 +92,7 @@ local function reload()
   if #parsed.slides == 0 then
     return
   end
-  qr.expand(parsed.slides)
+  expand_media(parsed, state.source_buf)
   state.parsed = parsed
   ui.set_slide_content(state.current_slide) -- clamps to the new slide count
 end
@@ -96,7 +110,7 @@ M.start_presentation = function(opts)
     vim.notify("present: no slides found (use `># Title` or `>---`)", vim.log.levels.WARN)
     return
   end
-  qr.expand(state.parsed.slides)
+  expand_media(state.parsed, source_buf)
   state.current_slide = 1
   state.title = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(source_buf), ":t")
   state.active = true
@@ -111,7 +125,9 @@ M.start_presentation = function(opts)
   -- Mini gray highlight for the configured header/footer text.
   vim.api.nvim_set_hl(0, "PresentDim", { link = "Comment", default = true })
 
-  local windows = ui.window_configurations(state.banner)
+  -- Lay out for the first slide's chrome so the deck doesn't visibly re-fit on
+  -- the very first draw; `ui` flips the title box per slide from there on.
+  local windows = ui.window_configurations(state.banner, (state.parsed.slides[1].title or "") ~= "")
   state.floats.background = ui.create_floating_window(windows.background)
   state.floats.header = ui.create_floating_window(windows.header)
   state.floats.footer = ui.create_floating_window(windows.footer)

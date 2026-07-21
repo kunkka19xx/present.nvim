@@ -44,8 +44,20 @@ end
 | Callouts       | yes       | `>!note`, `>!tip`, ...          |
 | Tables         | yes       | this very slide                |
 
+># Images
+
+>// paths are relative to THIS file, so the deck travels with its assets
+
+- This is my image
+>img logo.png 34
+
+
+>#
+>img icon.png 50
+
 ># Scan me
 
 >qr https://github.com/kunkka19xx/present.nvim
 
 >// end of deck
+

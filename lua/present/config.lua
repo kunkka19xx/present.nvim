@@ -17,14 +17,22 @@ local executors = require("present.executors")
 ---@field comment string?           Prefix for dropped comment lines (">//")
 ---@field callout string?           Prefix opening a callout box (">!", e.g. ">!note")
 ---@field qr string?                Prefix rendering the rest of the line as a QR code (">qr")
+---@field image string?             Prefix rendering an image file on the slide (">img")
 ---@field notes string?             Prefix for speaker-note lines ("Notes:")
 ---@field reveal_on_heading boolean Treat plain markdown headings as in-slide reveals
+
+---@class present.Image
+---@field backend string       "auto" | "kitty" | "chafa" | "off"
+---@field width integer        Default image width in terminal cells
+---@field max_height integer   Cap on image height in cells (0 = uncapped)
+---@field cell_aspect number   Cell height / width; raise if images look squashed
 
 ---@class present.Options
 ---@field syntax present.Syntax
 ---@field center_vertical boolean   Center body vertically (else flow from top)
 ---@field top_padding integer       Blank lines above the body when not centering
 ---@field spotlight boolean         Dim already-revealed chunks so the newest stands out
+---@field image present.Image       `>img` rendering
 ---@field executors table<string, fun(block: present.Block): string[]>
 
 local M = {}
@@ -40,12 +48,22 @@ M.defaults = {
     comment = ">//", -- prefix: line dropped, never shown
     callout = ">!", -- prefix: callout box, e.g. `>!note text` (note/tip/warning/...)
     qr = ">qr", -- prefix: render the rest of the line as a QR code (needs qrencode)
+    image = ">img", -- prefix: render an image file, `>img <path> [width]`
     notes = "Notes:", -- prefix: speaker note (shown with `s`)
     reveal_on_heading = true, -- also treat plain markdown headings as reveals
   },
   center_vertical = false, -- false: flow from top; true: center in the card
   top_padding = 1, -- blank lines above the body when not centering
   spotlight = false, -- true: dim already-revealed chunks so the newest stands out
+  image = {
+    -- "auto" probes the terminal: real graphics where they work, `chafa` cell
+    -- art otherwise. Force one with "kitty"/"chafa", or "off" for a plain
+    -- stand-in line.
+    backend = "auto",
+    width = 40, -- default width in cells; `>img pic.png 60` overrides per image
+    max_height = 0, -- cap the height in cells, shrinking width to match (0 = uncapped)
+    cell_aspect = 2.0, -- cell height / width; raise if images come out squashed
+  },
   executors = {
     lua = executors.lua,
     javascript = executors.create_system_executor("node"),

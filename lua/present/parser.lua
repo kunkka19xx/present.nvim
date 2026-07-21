@@ -11,6 +11,7 @@
 ---@field notes string[]
 ---@field header string?  Per-slide header text (below the title), overrides global
 ---@field footer string?  Per-slide footer text, overrides global
+---@field image_marks table[]?  Extmarks colouring expanded `>img` lines (set by present.image)
 
 ---@class present.Slides
 ---@field slides present.Slide[]
@@ -169,6 +170,19 @@ function M.parse(lines, syntax)
       end
     end
 
+    -- Image (`>img <path> [width]`) --------------------------------
+    -- Same deal as `>qr`: the payload is carried verbatim on a sentinel line and
+    -- resolved after parsing, so reading a file / probing the terminal never
+    -- happens in here. `present.image` splits the path from the optional width.
+    do
+      local spec = after_token(raw, S.image)
+      if spec ~= nil and spec ~= "" then
+        table.insert(current.body, "\1img:" .. spec)
+        seen_content = true
+        goto continue
+      end
+    end
+
     -- New slide with a title (`>#`, `>##`, ...) --------------------
     do
       local title = after_token(raw, S.slide, true)
@@ -264,13 +278,23 @@ function M.parse(lines, syntax)
     end
   end
 
+  M.measure(slides.slides)
+  return slides
+end
+
+--- Recompute the body-length-derived layout fields (`anchor`, `reveal_start`).
+--- Both are line counts, so anything that rewrites a body after parsing - the
+--- `>qr` and `>img` sentinel expansions, which turn one line into many - has to
+--- call this again or the vertical anchor and the spotlight split drift.
+---@param list present.Slide[]
+function M.measure(list)
   -- Each slide's `anchor` = the tallest body in its reveal group, so every
   -- reveal step keeps the same top offset and grows downward (no jumping).
   local group_max = {}
-  for _, s in ipairs(slides.slides) do
+  for _, s in ipairs(list) do
     group_max[s.group] = math.max(group_max[s.group] or 0, #s.body)
   end
-  for _, s in ipairs(slides.slides) do
+  for _, s in ipairs(list) do
     s.anchor = group_max[s.group]
   end
 
@@ -279,12 +303,10 @@ function M.parse(lines, syntax)
   -- chunk stands out. Snapshots within a group are ordered and prefix-extending,
   -- so the previous snapshot's length is exactly the dim count.
   local prev_len = {}
-  for _, s in ipairs(slides.slides) do
+  for _, s in ipairs(list) do
     s.reveal_start = prev_len[s.group] or 0
     prev_len[s.group] = #s.body
   end
-
-  return slides
 end
 
 return M
