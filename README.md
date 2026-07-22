@@ -6,7 +6,9 @@ Present a markdown buffer directly in floating windows - no external tooling, no
 Originally inspired by [tjdevries/present.nvim](https://github.com/tjdevries/present.nvim),
 rewritten with a clearer, easier-to-type separator design and more features:
 
-https://github.com/user-attachments/assets/2211f408-67e5-402c-80b4-a59e7e93bc1a
+
+https://github.com/user-attachments/assets/34cdee9f-c165-4dd4-9901-7c7de73ba068
+
 
 - `>`-prefixed markers that never collide with the markdown you render
 - in-slide **reveals** that grow downward (no jumping)
@@ -57,31 +59,7 @@ in-slide.**
 
 ### Example
 
-```markdown
->hd a hackable slideshow          <!-- global header, all slides -->
->ft present.nvim
-
-># Welcome
-This appears first.
-
----
-This appears on the next keypress (in-slide reveal).
-
-## A sub-point
-This heading reveals too, and is shown as content.
-
->// a private note-to-self, never rendered
-Notes: remember to breathe
-
->!tip A callout box - runs until the next blank line.
-
->---
-A brand new slide, with no title.
-
-​```lua
-print("press X to run me")
-​```
-```
+- Open [example.md](./test/example.md) -> :PresentStart
 
 ## Keys (during a presentation)
 
