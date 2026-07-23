@@ -112,6 +112,22 @@ function M.centered(text, width)
   return string.rep(" ", pad) .. text
 end
 
+--- Cut `text` down to `width` display columns, ellipsising if it had to give.
+--- Walks characters (not bytes) so multi-cell glyphs can't be split in half.
+function M.truncate(text, width)
+  if width <= 1 or vim.fn.strdisplaywidth(text) <= width then
+    return text
+  end
+  local out = ""
+  for _, char in ipairs(vim.fn.split(text, "\\zs")) do
+    if vim.fn.strdisplaywidth(out .. char) > width - 1 then
+      break
+    end
+    out = out .. char
+  end
+  return out .. "…"
+end
+
 -- Dim the whole first line of `buf` (used for the mini gray header/footer text).
 local function dim_line(buf, line)
   pcall(vim.api.nvim_buf_set_extmark, buf, ns, line, 0, {

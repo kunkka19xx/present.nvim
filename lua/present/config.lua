@@ -18,6 +18,7 @@ local executors = require("present.executors")
 ---@field callout string?           Prefix opening a callout box (">!", e.g. ">!note")
 ---@field qr string?                Prefix rendering the rest of the line as a QR code (">qr")
 ---@field image string?             Prefix rendering an image file on the slide (">img")
+---@field toc string?               Whole line listing the deck's sections (">toc")
 ---@field notes string?             Prefix for speaker-note lines ("Notes:")
 ---@field reveal_on_heading boolean Treat plain markdown headings as in-slide reveals
 
@@ -27,8 +28,16 @@ local executors = require("present.executors")
 ---@field max_height integer   Cap on image height in cells (0 = uncapped)
 ---@field cell_aspect number   Cell height / width; raise if images look squashed
 
+---@class present.Toc
+---@field auto boolean          Insert a contents slide automatically
+---@field title string          Title for the auto-inserted slide
+---@field after integer         Insert it after this slide (rounded up to a section boundary)
+---@field min_sections integer  Skip the auto slide unless the deck has this many sections
+---@field max_columns integer   Widen a long list into up to this many columns (1 = never)
+
 ---@class present.Options
 ---@field syntax present.Syntax
+---@field toc present.Toc           Automatic table of contents
 ---@field center_vertical boolean   Center body vertically (else flow from top)
 ---@field top_padding integer       Blank lines above the body when not centering
 ---@field spotlight boolean         Dim already-revealed chunks so the newest stands out
@@ -49,8 +58,19 @@ M.defaults = {
     callout = ">!", -- prefix: callout box, e.g. `>!note text` (note/tip/warning/...)
     qr = ">qr", -- prefix: render the rest of the line as a QR code (needs qrencode)
     image = ">img", -- prefix: render an image file, `>img <path> [width]`
+    toc = ">toc", -- line: expands to a bullet list of the deck's section titles
     notes = "Notes:", -- prefix: speaker note (shown with `s`)
     reveal_on_heading = true, -- also treat plain markdown headings as reveals
+  },
+  -- A contents slide the deck gets for free. Writing `>toc` yourself turns this
+  -- off for that deck - your placement wins.
+  toc = {
+    auto = true, -- false: only ever show a contents slide where `>toc` says
+    title = "Contents", -- title of the auto-inserted slide
+    after = 1, -- insert after slide 1 (the title slide); 0 = before everything
+    min_sections = 3, -- don't bother for decks with fewer sections than this
+    max_columns = 3, -- a long list widens into columns before it spills onto a
+    -- second contents slide; 1 keeps it a plain single column
   },
   center_vertical = false, -- false: flow from top; true: center in the card
   top_padding = 1, -- blank lines above the body when not centering

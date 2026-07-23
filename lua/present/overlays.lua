@@ -4,6 +4,7 @@
 local state = require("present.state")
 local config = require("present.config")
 local ui = require("present.ui")
+local toc = require("present.toc")
 
 local M = {}
 
@@ -39,17 +40,15 @@ function M.open_overlay(lines, opts)
 end
 
 -- "  12  Title  ·  first body line" - searchable, disambiguates reveal steps.
+-- The trailing prose is the parser's `summary`, so table pipes, callout markers
+-- and expanded QR/image art never end up in the label.
 local function slide_label(slide, i)
   local title = slide.title ~= "" and slide.title or "(untitled)"
-  local preview = ""
-  for _, l in ipairs(slide.body) do
-    local t = vim.trim(l)
-    if t ~= "" and not t:match("^```") then
-      preview = t
-      break
-    end
+  local summary = slide.summary or ""
+  if summary == "" then
+    return string.format("%3d  %s", i, title)
   end
-  return string.format("%3d  %s  ·  %s", i, title, preview)
+  return string.format("%3d  %s  ·  %s", i, title, summary)
 end
 
 -- The markdown a preview pane should show for a given slide index.
@@ -67,18 +66,131 @@ local function slide_preview_lines(idx)
   return lines
 end
 
---- Slide overview: a simple list; <CR> jumps.
-function M.picker()
-  local items = {}
-  for i, slide in ipairs(state.parsed.slides) do
-    table.insert(items, slide_label(slide, i))
+local TITLE = "Contents"
+
+--- Type a slide number in the contents popup to go there.
+---
+--- The numbers on the left are slide numbers, so `7` should mean slide 7 - but a
+--- digit is not always a whole number: in an eleven-slide deck `1` could still
+--- grow into `10`. So digits accumulate, and the jump fires at the first moment
+--- the number is settled:
+---
+---   * immediately, once no larger slide number starts with what was typed
+---     (`3` in a 20-slide deck can only become 3 once 30 is off the end),
+---   * on `<CR>`, which commits whatever is pending,
+---   * otherwise after `timeoutlen` with no further digit - the same rule Vim
+---     uses to resolve its own ambiguous mappings.
+---
+--- The cursor tracks every keystroke so the target is visible as it narrows, and
+--- the pending digits are shown in the border title: `cmdheight` is 0 while
+--- presenting, so the command line is not available to echo into.
+---@param overlay { buf: integer, win: integer, close: fun() }
+---@param entries present.TocEntry[]
+---@param jump fun(idx: integer)
+---@return fun(): boolean  Commits a pending number, if there is one
+local function bind_number_jump(overlay, entries, jump)
+  local last = #state.parsed.slides
+  local pending = ""
+  local generation = 0 -- invalidates the timers of superseded keystrokes
+
+  local function show_pending()
+    local title = pending == "" and (" " .. TITLE .. " ") or (" " .. TITLE .. "  " .. pending .. " ")
+    pcall(vim.api.nvim_win_set_config, overlay.win, { title = title })
   end
-  local overlay = M.open_overlay(items, { title = "Slides", filetype = "text", width = 0.6 })
-  vim.api.nvim_win_set_cursor(overlay.win, { state.current_slide, 0 })
-  vim.keymap.set("n", "<CR>", function()
-    local row = vim.api.nvim_win_get_cursor(overlay.win)[1]
+
+  local function commit()
+    local idx = tonumber(pending)
+    pending = ""
+    if idx then
+      jump(idx) -- out-of-range numbers are clamped by set_slide_content
+    end
+    return idx ~= nil
+  end
+
+  for digit = 0, 9 do
+    local key = tostring(digit)
+    vim.keymap.set("n", key, function()
+      local typed = pending .. key
+      local slide = tonumber(typed)
+      if slide == 0 then -- a leading zero names no slide
+        return
+      end
+      pending = typed
+      show_pending()
+      if slide <= last then
+        vim.api.nvim_win_set_cursor(overlay.win, { toc.entry_at(entries, slide), 0 })
+      end
+      if slide * 10 > last then -- no slide number extends this one
+        commit()
+        return
+      end
+      generation = generation + 1
+      local mine = generation
+      vim.defer_fn(function()
+        -- Bail out if another digit followed, or the popup is already gone (`q`,
+        -- `<Esc>`, or a jump) - a stale timer must not move the deck.
+        if mine == generation and pending ~= "" and vim.api.nvim_win_is_valid(overlay.win) then
+          commit()
+        end
+      end, vim.o.timeoutlen)
+    end, { buffer = overlay.buf })
+  end
+
+  return commit
+end
+
+--- Table of contents: one row per logical slide - reveal steps and `>---` pages
+--- are folded into the section they continue, so a title appears once and the
+--- page range sits in the left column. <CR> jumps to a section's first page.
+---
+--- Rows are truncated rather than wrapped: the <CR> mapping reads the cursor's
+--- row as an entry number, so a row spilling onto a second line would point at
+--- the wrong section.
+function M.picker()
+  local entries = toc.entries(state.parsed.slides)
+  local width = math.floor(vim.o.columns * 0.6)
+
+  -- Left column: "6", or "1-5" for a section spanning several pages. Sized to
+  -- the widest so the titles line up.
+  local ranges, range_w = {}, 0
+  for i, entry in ipairs(entries) do
+    ranges[i] = entry.last > entry.index and (entry.index .. "-" .. entry.last) or tostring(entry.index)
+    range_w = math.max(range_w, #ranges[i])
+  end
+
+  local items = {}
+  for i, entry in ipairs(entries) do
+    local label = entry.title
+    if label == "" then -- an untitled section: name it after its first line
+      label = entry.summary ~= "" and entry.summary or "(untitled)"
+    end
+    items[i] = string.format("  %" .. range_w .. "s   %s", ranges[i], ui.truncate(label, width - range_w - 7))
+  end
+
+  local height = math.max(1, math.min(#items, math.floor(vim.o.lines * 0.7)))
+  local overlay = M.open_overlay(items, {
+    title = TITLE,
+    filetype = "text",
+    width = width,
+    height = height,
+  })
+  vim.wo[overlay.win].cursorline = true
+  vim.api.nvim_win_set_cursor(overlay.win, { toc.entry_at(entries, state.current_slide), 0 })
+
+  local function jump(idx)
     overlay.close()
-    ui.set_slide_content(row)
+    ui.set_slide_content(idx)
+  end
+
+  -- `<CR>` commits a half-typed number first (`1<CR>` means slide 1, not "the
+  -- section the cursor happens to be resting on"), and otherwise takes the row.
+  local commit_number = bind_number_jump(overlay, entries, jump)
+  vim.keymap.set("n", "<CR>", function()
+    if commit_number() then
+      return
+    end
+    local row = vim.api.nvim_win_get_cursor(overlay.win)[1]
+    jump(entries[row] and entries[row].index or row)
   end, { buffer = overlay.buf })
 end
 
@@ -221,7 +333,7 @@ function M.help()
     "  gg / G                  first / last slide",
     "  {count}G                jump to slide {count}",
     "  /                       fuzzy-search slides",
-    "  o                       slide overview / picker",
+    "  o                       table of contents ({number} jumps)",
     "  X / A                   run first / all code blocks",
     "  s                       toggle speaker notes",
     "  r                       reload from the source file",
@@ -238,6 +350,7 @@ function M.help()
     "  >!note ...  callout box (note/tip/warning/...)",
     "  >qr <text>  render text as a QR code",
     "  >img <path> [w]  render an image, w cells wide",
+    "  >toc        put the contents list here",
   }, { title = "Help", width = 0.55, height = 0.78 })
 end
 

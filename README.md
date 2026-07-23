@@ -14,12 +14,13 @@ https://github.com/user-attachments/assets/34cdee9f-c165-4dd4-9901-7c7de73ba068
 - in-slide **reveals** that grow downward (no jumping)
 - **sticky titles** and configurable **header / footer** text
 - **callout boxes** (`>!note`, `>!tip`, `>!warning`, ...)
+- an **automatic table of contents** slide - no markup needed, `o` to jump around
 - **QR code** slides (`>qr <text>`) rendered right in the terminal
 - **images** (`>img <path>`) - true terminal graphics, cell art everywhere else
 - **spotlight** reveals - dim earlier chunks so the newest one stands out
 - **hot reload** - edit the source, save, and the slide updates in place
 - **run** code blocks live (lua, js, ts, python, bash, sh, go, rust, or your own)
-- **fuzzy search** with a preview pane, a slide **picker**, and **speaker notes**
+- **fuzzy search** with a preview pane and **speaker notes**
 - every marker is **configurable**
 
 ## Separators
@@ -40,6 +41,7 @@ in-slide.**
 | `>!note <text>` | callout box (`note` / `tip` / `warning` / `important` / ...) |
 | `>qr <text>` | render `<text>` (e.g. a URL) as a QR code on the slide |
 | `>img <path> [w]` | render an image file, `w` cells wide (default 40) |
+| `>toc` | put the contents list here instead of where it goes automatically |
 | `Notes: ...` | speaker note - shown with `s`, never on the slide |
 
 - **Sticky titles:** a `>#` title stays in the header across in-slide reveals and
@@ -59,7 +61,7 @@ in-slide.**
 
 ### Example
 
-- Open [example.md](./test/example.md) -> :PresentStart
+- Open [example.md](./tests/example.md) -> :PresentStart
 
 ## Keys (during a presentation)
 
@@ -70,7 +72,7 @@ in-slide.**
 | `gg` / `G` | first / last slide |
 | `{count}G` | jump to slide number |
 | `/` | fuzzy-search slides with a live preview pane (fzf-lua; falls back to `vim.ui.select`) |
-| `o` | slide overview / picker |
+| `o` | table of contents - `<CR>` or a typed slide number jumps |
 | `X` / `A` | run first / all code blocks |
 | `s` | toggle speaker notes |
 | `r` | reload from the source buffer (also automatic on `:w`) |
@@ -124,8 +126,17 @@ require("present").setup {
     callout     = ">!",       -- prefix: callout box, e.g. `>!note text`
     qr          = ">qr",      -- prefix: render the rest of the line as a QR code
     image       = ">img",     -- prefix: render an image, `>img <path> [width]`
+    toc         = ">toc",     -- line: put the contents list right here
     notes       = "Notes:",   -- prefix: speaker note (shown with `s`)
     reveal_on_heading = true, -- also treat plain markdown headings as reveals
+  },
+  toc = {
+    auto = true,                  -- a contents slide with no markup needed
+    title = "Contents",           -- title of the inserted slide
+    after = 1,                    -- insert after slide 1; 0 = before everything
+    min_sections = 3,             -- skip it for decks smaller than this
+    max_columns = 3,              -- widen a long list into columns before
+                                  -- spilling it onto a second slide; 1 = never
   },
   center_vertical = false,        -- false: flow from the top; true: center the
                                   -- body (anchored so reveals grow downward)
@@ -180,6 +191,95 @@ deck and re-renders the current slide in place - no need to quit and restart.
 Press `r` to reload manually. Your position is kept (clamped if the slide count
 shrank), so tweak wording, save, and watch it update. (Adding or removing a
 `>hd` header after start won't re-lay-out the top banner - restart for that.)
+
+## Table of contents
+
+**You don't write one.** Any deck with three or more sections gets a contents
+slide inserted right after its title slide, listing every section in order. Write
+nothing, get an agenda - and because it is rebuilt from the deck on every
+[reload](#hot-reload), it can't fall out of date the way a hand-typed one does.
+
+A deck's outline is not its slide list, though: a reveal step is its own slide,
+and so is every `>---` page, so one titled section can span half a dozen slide
+numbers all repeating the same title. The contents folds those back into one line
+per section. Sections with no title have nothing to contribute and are skipped,
+as is the contents slide itself.
+
+```lua
+toc = {
+  auto = true,          -- false: no contents slide unless a `>toc` asks for one
+  title = "Contents",   -- title of the inserted slide
+  after = 1,            -- insert after slide 1 (the title slide); 0 = first slide of all
+  min_sections = 3,     -- skip it for decks smaller than this
+  max_columns = 3,      -- widen before paginating; 1 = plain single column
+},
+```
+
+`after` names a slide but the contents always lands on a **section** boundary -
+dropping it inside a reveal group would split snapshots that have to stay
+contiguous. With the default `after = 1`, a title slide that has reveals of its
+own keeps them, and the contents follows the last of them.
+
+### When the list is long
+
+A slide body **does not scroll** - the cursor is pinned to its first line - so a
+list taller than the slide would not merely look cramped, it would be *invisible*
+below the last row. The contents therefore sizes itself to the slide:
+
+1. **Columns.** Too long for one column and it widens, up to `max_columns`,
+   filled top-to-bottom then left-to-right. One dense page beats flipping through
+   several. (A multi-column list marks entries with `·` rather than `-`:
+   `render-markdown` only turns the *first* `- ` on a line into a bullet, so the
+   later columns would keep literal dashes.)
+2. **Pages.** Longer than even that and it continues onto further contents
+   slides, titled `Contents (1/2)`, `Contents (2/2)`, ...
+3. **Long titles** are truncated to their column with `…`, since a wrapped title
+   would take two rows and throw the fit off.
+
+Both steps measure against a worst case (a deck *with* a header banner), so the
+list can come up one or two rows shorter than strictly necessary - the cost of
+never clipping. Resizing the terminal mid-deck doesn't re-flow it; save or press
+`r` to rebuild.
+
+**Placing it yourself.** Put `>toc` on its own line and the contents appears
+*there* instead - the automatic slide steps aside for the whole deck, so you also
+choose the title, the position, and what shares the slide.
+
+```markdown
+># Agenda
+
+Here's where we're going:
+
+>toc
+```
+
+This one cannot paginate - it sits on a slide you wrote, and inserting slides
+around it would shuffle your deck - so it uses columns and, if the list still
+doesn't fit, keeps what does and ends with `... and 12 more` rather than clipping
+the rest away in silence.
+
+**While presenting.** `o` opens the same outline as a jump list, with the page
+range in the left column and the cursor already on the section you're in.
+
+```
+  1-5   present.nvim demo
+    6   Contents
+    7   Callouts
+    8   Tables
+    9   Images
+   11   Scan me
+```
+
+**Type a slide number to go there** - `7` lands on slide 7. Since a digit isn't
+always a whole number (`1` could still become `10`), digits accumulate and the
+jump fires the moment the number is settled: instantly when no larger slide
+number starts with what you typed, on `<CR>`, or after `timeoutlen` with no
+further digit - the same rule Vim uses for its own ambiguous mappings. The cursor
+follows as you type and the pending digits show up in the border title. `<CR>`
+alone, with nothing typed, goes to the section under the cursor.
+
+For finer aim, `/` searches every individual slide (including reveal steps)
+rather than sections.
 
 ## QR codes
 
@@ -305,9 +405,10 @@ The code is small and split by concern so it stays easy to hack on:
 | `lua/present/executors.lua` | code-block runners |
 | `lua/present/qr.lua` | `>qr` rendering via qrencode (cached) |
 | `lua/present/image.lua` | `>img` rendering (kitty graphics / chafa, cached) |
+| `lua/present/toc.lua` | deck outline, shared by `o` and `>toc` |
 | `lua/present/state.lua` | shared runtime state |
 | `lua/present/ui.lua` | floating windows + slide rendering |
-| `lua/present/overlays.lua` | picker, search, notes, run, help, confirm |
+| `lua/present/overlays.lua` | contents, search, notes, run, help, confirm |
 | `plugin/present.lua` | registers `:PresentStart` |
 
 `require("present")._parse_slides(lines)` returns the parsed slide table, handy

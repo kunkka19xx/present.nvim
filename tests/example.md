@@ -2,6 +2,9 @@
 >hd a hackable markdown slideshow
 >ft present.nvim
 
+>// no contents slide in here on purpose: the deck gets one for free, right after
+>// the title slide. Write `>toc` somewhere to place it yourself instead.
+
 ># present.nvim demo
 
 >// this line is a comment and is never shown

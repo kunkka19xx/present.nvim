@@ -11,6 +11,7 @@
 ---@field notes string[]
 ---@field header string?  Per-slide header text (below the title), overrides global
 ---@field footer string?  Per-slide footer text, overrides global
+---@field summary string  First body line as plain prose, for labelling the slide in lists
 ---@field image_marks table[]?  Extmarks colouring expanded `>img` lines (set by present.image)
 
 ---@class present.Slides
@@ -47,6 +48,59 @@ local function after_token(raw, token, allow_repeat)
     return vim.trim(rest)
   end
   return nil
+end
+
+-- Strip markdown decoration off a body line to get readable prose for a list
+-- label. Returns "" for lines that carry no prose at all (a bare callout kind, a
+-- rule, decoration only).
+local function as_prose(line)
+  local t = vim.trim(line)
+  t = t:gsub("^>%s*", "") -- blockquote / callout body
+  if t:match("^%[!") then -- the `[!NOTE]` marker line itself
+    return ""
+  end
+  t = t:gsub("^#+%s*", "") -- heading
+  t = t:gsub("^[-*+]%s+", "") -- bullet
+  t = t:gsub("^%d+%.%s+", "") -- ordered item
+  t = t:gsub("%[([^%]]*)%]%b()", "%1") -- links -> their text
+  t = t:gsub("[`*_]", "") -- inline emphasis / code ticks
+  if t:match("^[-=%s]+$") then -- horizontal rule / setext underline
+    return ""
+  end
+  return vim.trim(t)
+end
+
+-- First line of `body` that reads as prose, for labelling the slide in the
+-- overview and search popups. Table rows are skipped (pipes make terrible
+-- labels), and so are the `\1` sentinels - which is why this runs at parse time,
+-- while `>qr`/`>img` are still one line each rather than the many lines of art
+-- they expand into.
+--
+-- A slide can legitimately have no prose at all: only a code block, only a
+-- picture. Rather than label those with nothing, fall back to the first line of
+-- code, then to whatever the sentinel was pointing at.
+---@param body string[]
+---@return string
+local function summarize(body)
+  local in_code = false
+  local code, media = nil, nil
+  for _, line in ipairs(body) do
+    if line:match("^%s*```") or line:match("^%s*~~~") then
+      in_code = not in_code
+    elseif in_code then
+      code = code or (vim.trim(line) ~= "" and vim.trim(line) or nil)
+    elseif line:sub(1, 1) == "\1" then
+      -- `\1img:<path> [w]` -> the file's name; `\1qr:<text>` -> the text.
+      local path = line:match("^\1img:(%S+)")
+      media = media or (path and vim.fn.fnamemodify(path, ":t")) or line:match("^\1qr:(.*)$")
+    elseif not vim.trim(line):match("^|") then
+      local prose = as_prose(line)
+      if prose ~= "" then
+        return prose
+      end
+    end
+  end
+  return code or media or ""
 end
 
 --- Parse buffer lines into slides (with reveals expanded to sub-slides).
@@ -183,6 +237,18 @@ function M.parse(lines, syntax)
       end
     end
 
+    -- Table of contents (`>toc`) ------------------------------------
+    -- Another sentinel: the outline depends on slides that may not be parsed
+    -- yet, so `present.toc` fills it in once the whole deck is known.
+    do
+      local toc = after_token(raw, S.toc)
+      if toc ~= nil then
+        table.insert(current.body, "\1toc")
+        seen_content = true
+        goto continue
+      end
+    end
+
     -- New slide with a title (`>#`, `>##`, ...) --------------------
     do
       local title = after_token(raw, S.slide, true)
@@ -276,6 +342,7 @@ function M.parse(lines, syntax)
     while #s.body > 0 and vim.trim(s.body[#s.body]) == "" do
       table.remove(s.body)
     end
+    s.summary = summarize(s.body)
   end
 
   M.measure(slides.slides)

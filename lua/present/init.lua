@@ -10,17 +10,19 @@
 ---   >!note ...     callout box (note/tip/warning/...); more lines until a blank
 ---   >qr <text>     render the text as a QR code on the slide (needs qrencode)
 ---   >img <path> [w] render an image file, w cells wide (kitty graphics / chafa)
+---   >toc          contents list here (a deck gets one automatically otherwise)
 ---   Notes: ...     speaker note, shown with `s`, never on the slide
 ---
 --- Keys during a presentation:
 ---   n / <Space> / <Right>   next    p / b / <Left>   previous
----   gg first   G last   {count}G goto   o overview   / search
+---   gg first   G last   {count}G goto   o contents   / search
 ---   X run first block   A run all blocks   s notes   r reload   ? help   q quit
 ---
 --- Code is split across:
 ---   config     defaults + setup      parser    markdown -> slides
 ---   executors  code runners          state     shared runtime state
----   ui         windows + rendering   overlays  popups (picker/search/notes/run)
+---   ui         windows + rendering   overlays  popups (contents/search/notes/run)
+---   toc        deck outline (`o`, >toc)
 ---   init       (this file)           public API + keymaps + lifecycle
 
 local config = require("present.config")
@@ -31,15 +33,19 @@ local overlays = require("present.overlays")
 local executors = require("present.executors")
 local qr = require("present.qr")
 local image = require("present.image")
+local toc = require("present.toc")
 
 local M = {}
 
---- Expand the parser's inert sentinel lines (`>qr`, `>img`) into real content.
---- Both turn one line into many, so the layout measurements have to be redone
---- against the expanded bodies.
+--- Fill in everything the (pure) parser deliberately left undone: the automatic
+--- contents slide, and the inert `>toc` / `>qr` / `>img` sentinel lines, each of
+--- which turns one line into many. Slide count and body lengths both change here,
+--- so the layout measurements have to be redone afterwards.
 ---@param parsed present.Slides
 ---@param source_buf integer
 local function expand_media(parsed, source_buf)
+  toc.insert_auto(parsed.slides, config.options.toc)
+  toc.expand(parsed.slides)
   qr.expand(parsed.slides)
   local dir = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(source_buf), ":p:h")
   image.expand(parsed.slides, dir)
